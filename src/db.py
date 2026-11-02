@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
-DB_PATH = "jobs.db"
+def get_db_path() -> str:
+    """Returns the active SQLite database path, supporting environment override for testing."""
+    return os.environ.get("VEDIOHOOKS_DB_PATH", "jobs.db")
 
 
 def get_db_connection() -> sqlite3.Connection:
     """Creates a thread-safe connection to the SQLite database."""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 

@@ -862,5 +862,139 @@ def test_viral_hook_overlay_rendering_and_ab_queue():
     assert q_res.json()["count"] == 3
 
 
+def test_real_time_performance_analytics():
+    """Verifies live real-time operational analytics and virality metrics aggregation."""
+    from src.analytics import get_performance_analytics
+
+    data = get_performance_analytics(account_id="all")
+    assert "total_renders" in data
+    assert "avg_virality_score" in data
+    assert "virality_tiers" in data
+    assert "publishing_pipeline" in data
+    assert "niche_breakdown" in data
+    assert len(data["niche_breakdown"]) >= 5
+
+    # API test
+    res = client.get("/api/analytics")
+    assert res.status_code == 200
+    assert "virality_tiers" in res.json()
+
+
+def test_cover_thumbnail_generation_3_styles():
+    """Verifies generation of 3 distinct psychological 9:16 cover thumbnail styles."""
+    import subprocess
+    from src.thumbnail_engine import generate_cover_thumbnails
+
+    src_video = "temp/test_thumb_src.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "testsrc=size=360x640:rate=25",
+        "-t", "2.0",
+        "-c:v", "libx264", "-preset", "ultrafast",
+        src_video
+    ]
+    subprocess.run(cmd, capture_output=True)
+
+    covers = generate_cover_thumbnails(
+        video_path=src_video,
+        title="STOP WASTING TIME START NOW",
+        niche="Motivation",
+        output_dir="temp/test_covers"
+    )
+    assert len(covers) == 3
+    style_ids = [c["style_id"] for c in covers]
+    assert "hormozi_bold" in style_ids
+    assert "beast_pop" in style_ids
+    assert "cinema_clean" in style_ids
+    assert all(os.path.exists(c["path"]) for c in covers)
+
+    # API test
+    res = client.post("/api/thumbnails/generate", json={
+        "video_path": src_video,
+        "title": "NEVER GIVE UP",
+        "niche": "Motivation"
+    })
+    assert res.status_code == 200
+    assert len(res.json()["covers"]) == 3
+
+
+def test_beat_sync_transient_detection_and_alignment():
+    """Verifies musical downbeat detection, BPM tempo estimation, and rhythmic word snapping."""
+    import subprocess
+    from src.beat_sync import detect_audio_beats, align_word_timestamps_to_beats
+
+    src_audio = "temp/test_beat_src.mp3"
+    # Generate 120 BPM rhythmic pulsed audio (0.5s beat intervals)
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "sine=frequency=100:duration=4",
+        "-af", "tremolo=f=2.0:d=0.9",
+        src_audio
+    ]
+    subprocess.run(cmd, capture_output=True)
+
+    beat_data = detect_audio_beats(src_audio, max_duration=4.0)
+    assert "bpm" in beat_data
+    assert "beats" in beat_data
+    assert isinstance(beat_data["beats"], list)
+
+    # Word snapping test
+    sample_words = [
+        {"word": "Discipline", "start": 0.52, "end": 0.85},
+        {"word": "Over", "start": 1.48, "end": 1.70},
+        {"word": "Motivation", "start": 2.50, "end": 2.95}
+    ]
+    aligned = align_word_timestamps_to_beats(sample_words, beats=[0.5, 1.0, 1.5, 2.0, 2.5], snap_window_ms=100.0)
+    assert len(aligned) == 3
+    # Word starting at 0.52 should snap to 0.5
+    assert aligned[0]["start"] == 0.5
+    assert aligned[0]["beat_snapped"] is True
+
+    # API test
+    res = client.post("/api/audio/beat-sync", json={
+        "video_path": src_audio,
+        "max_duration": 4.0
+    })
+    assert res.status_code == 200
+    assert "bpm" in res.json()
+
+
+def test_multi_platform_export_formatting():
+    """Verifies generation of tailored algorithm copy for Reels, Shorts, and TikTok."""
+    from src.multi_platform_export import generate_multi_platform_package
+
+    package = generate_multi_platform_package(
+        title="Why 99% Of People Fail At Building Discipline",
+        hook_text="Nobody talks about this one rule of discipline...",
+        script_summary="Small daily actions matter 100x more than occasional intense efforts.",
+        niche="Motivation"
+    )
+
+    # Instagram Reels
+    assert "instagram" in package
+    assert "#motivation" in package["instagram"]["hashtags"]
+
+    # YouTube Shorts
+    assert "youtube_shorts" in package
+    assert "#Shorts" in package["youtube_shorts"]["title"]
+    assert "pinned_comment" in package["youtube_shorts"]
+
+    # TikTok
+    assert "tiktok" in package
+    assert "#fyp" in package["tiktok"]["hashtags"]
+    assert "pinned_comment" in package["tiktok"]
+
+    # API test
+    res = client.post("/api/export/multi-platform", json={
+        "title": "Untold Story of World Cup Final",
+        "hook_text": "The greatest over in cricket history...",
+        "script_summary": "How this single ball changed the championship.",
+        "niche": "Cricket"
+    })
+    assert res.status_code == 200
+    assert res.json()["youtube_shorts"]["title"].endswith("#Shorts")
+
+
+
 
 

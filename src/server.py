@@ -72,6 +72,10 @@ from src.publishing import is_publishing_enabled, get_instagram_config, Instagra
 from src.ai_director import generate_content_plan, build_director_heuristic_plan, NICHE_DIRECTOR_PROFILES
 from src.dubbing_engine import list_curated_voices, synthesize_speech, dub_video_short
 from src.hook_ab_engine import generate_hook_variants, render_hook_variant_overlay, queue_ab_split_test
+from src.analytics import get_performance_analytics
+from src.thumbnail_engine import generate_cover_thumbnails
+from src.beat_sync import detect_audio_beats, align_word_timestamps_to_beats
+from src.multi_platform_export import generate_multi_platform_package
 
 # App lifespan with 24/7 autonomous scheduler startup & shutdown
 @asynccontextmanager
@@ -167,6 +171,26 @@ class HookQueueABRequest(BaseModel):
     variants: List[Dict[str, Any]]
     base_caption: Optional[str] = ""
     hashtags: Optional[str] = ""
+
+
+class CoverThumbnailsRequest(BaseModel):
+    video_path: str
+    title: Optional[str] = "VIRAL SHORT"
+    niche: Optional[str] = "Motivation"
+    time_sec: Optional[float] = 1.0
+
+
+class BeatSyncRequest(BaseModel):
+    video_path: str
+    max_duration: Optional[float] = 45.0
+
+
+class MultiPlatformExportRequest(BaseModel):
+    title: str
+    hook_text: str
+    script_summary: str
+    niche: Optional[str] = "Motivation"
+    base_hashtags: Optional[str] = None
 
 
 class PublishingDraftUpdate(BaseModel):
@@ -983,6 +1007,74 @@ def queue_ab_test_endpoint(req: HookQueueABRequest):
         hashtags=req.hashtags or "#viral #shorts #reels"
     )
     return {"status": "queued", "draft_ids": draft_ids, "count": len(draft_ids)}
+
+
+# --- Dynamic Real-Time Analytics & Performance ---
+
+@app.get("/api/analytics")
+def get_analytics_endpoint(account_id: Optional[str] = None):
+    """Computes live real-time operational analytics and virality metrics."""
+    return get_performance_analytics(account_id=account_id)
+
+
+# --- 9:16 High-CTR Cover Thumbnail Studio ---
+
+@app.post("/api/thumbnails/generate")
+def generate_thumbnails_endpoint(req: CoverThumbnailsRequest):
+    """Generates 3 distinct high-converting cover thumbnail styles."""
+    try:
+        covers = generate_cover_thumbnails(
+            video_path=req.video_path,
+            title=req.title or "VIRAL SHORT",
+            niche=req.niche or "Motivation",
+            time_sec=req.time_sec or 1.0
+        )
+        return {"covers": covers}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/renders/{render_id}/covers")
+def get_render_covers_endpoint(render_id: int):
+    """Generates 3 cover thumbnail variants for a rendered short by ID."""
+    renders = list_rendered_shorts(limit=200)
+    target = next((r for r in renders if r["id"] == render_id), None)
+    if not target or not os.path.exists(target["video_path"]):
+        raise HTTPException(status_code=404, detail="Rendered video not found")
+
+    covers = generate_cover_thumbnails(
+        video_path=target["video_path"],
+        title=target.get("title") or "VIRAL HIGHLIGHT",
+        niche="Motivation",
+        time_sec=1.0
+    )
+    return {"covers": covers, "render_id": render_id}
+
+
+# --- Sound Design Beat-Sync Engine ---
+
+@app.post("/api/audio/beat-sync")
+def beat_sync_endpoint(req: BeatSyncRequest):
+    """Detects musical downbeats, BPM tempo, and transient rhythm spikes."""
+    if not os.path.exists(req.video_path):
+        raise HTTPException(status_code=404, detail="Audio/video file not found")
+    res = detect_audio_beats(req.video_path, max_duration=req.max_duration or 45.0)
+    return res
+
+
+# --- Multi-Platform Algorithm Export (Reels + Shorts + TikTok) ---
+
+@app.post("/api/export/multi-platform")
+def export_multi_platform_endpoint(req: MultiPlatformExportRequest):
+    """Generates tailored copy packages for Instagram Reels, YouTube Shorts, and TikTok."""
+    package = generate_multi_platform_package(
+        title=req.title,
+        hook_text=req.hook_text,
+        script_summary=req.script_summary,
+        niche=req.niche or "Motivation",
+        base_hashtags=req.base_hashtags
+    )
+    return package
 
 
 # --- Premium Commercial SaaS Dashboard UI (Single-Page App) ---
@@ -1853,24 +1945,107 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
       <!-- TAB 9: ANALYTICS -->
       <section id="tab-analytics" class="tab-view">
-        <div class="grid-3">
-          <div class="card">
-            <div class="card-title" style="margin-bottom: 0.5rem;">Virality Score Distribution</div>
-            <div class="card-subtitle" style="margin-bottom: 1rem;">Clips analyzed by engagement potential</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: #34d399;">88.4 <span style="font-size: 1rem; color: var(--text-muted);">Avg Score</span></div>
-            <div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.5rem;">Multi-dimensional hook scoring active</div>
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Real-Time Operational Analytics & Virality Telemetry</div>
+              <div class="card-subtitle">Live database performance metrics calculated across multi-account vertical production</div>
+            </div>
+            <button class="btn-secondary" style="font-size: 0.82rem;" onclick="loadAnalytics()">🔄 Refresh Analytics</button>
           </div>
-          <div class="card">
-            <div class="card-title" style="margin-bottom: 0.5rem;">Hook Retention Target</div>
-            <div class="card-subtitle" style="margin-bottom: 1rem;">Optimal 1-3s opening hooks</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: #818cf8;">94.2%</div>
-            <div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.5rem;">First 3 seconds speech density</div>
+        </div>
+
+        <div class="grid-3" style="margin-bottom: 1.5rem;">
+          <div class="card" style="margin-bottom: 0;">
+            <div class="card-title" style="margin-bottom: 0.35rem;">Average Virality Score</div>
+            <div class="card-subtitle" style="margin-bottom: 0.75rem;">Calculated across rendered shorts</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: #34d399;" id="analyticsAvgVirality">--</div>
+            <div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.5rem;" id="analyticsScoreRange">Range: -- to --</div>
           </div>
+          <div class="card" style="margin-bottom: 0;">
+            <div class="card-title" style="margin-bottom: 0.35rem;">Audience Retention Benchmark</div>
+            <div class="card-subtitle" style="margin-bottom: 0.75rem;">Predicted completion rate benchmark</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: #818cf8;" id="analyticsRetention">--%</div>
+            <div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.5rem;">Based on speech pacing & hook power</div>
+          </div>
+          <div class="card" style="margin-bottom: 0;">
+            <div class="card-title" style="margin-bottom: 0.35rem;">Production Output Cadence</div>
+            <div class="card-subtitle" style="margin-bottom: 0.75rem;">Total rendered vs daily network target</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: #fbbf24;" id="analyticsCadence">-- <span style="font-size: 1rem; color: var(--text-muted);">Shorts</span></div>
+            <div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.5rem;" id="analyticsDailyTarget">Daily Target: --</div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-bottom: 1.5rem;">
+          <!-- Virality Tier Breakdown -->
           <div class="card">
-            <div class="card-title" style="margin-bottom: 0.5rem;">Content Cadence</div>
-            <div class="card-subtitle" style="margin-bottom: 1rem;">Targeted daily production</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: #fbbf24;">10 <span style="font-size: 1rem; color: var(--text-muted);">Shorts / day</span></div>
-            <div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.5rem;">2 shorts per niche account</div>
+            <div class="card-title" style="margin-bottom: 1rem;">Virality Scoring Tiers</div>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+              <div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 0.25rem;">
+                  <span>🔥 Elite Virality (90 - 100)</span>
+                  <span id="tierEliteCount" style="font-weight: 700; color: #34d399;">0</span>
+                </div>
+                <div class="progress-bar-bg"><div id="tierEliteBar" class="progress-bar-fill" style="width: 0%; background: #34d399;"></div></div>
+              </div>
+              <div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 0.25rem;">
+                  <span>⚡ High Virality (80 - 89)</span>
+                  <span id="tierHighCount" style="font-weight: 700; color: #6366f1;">0</span>
+                </div>
+                <div class="progress-bar-bg"><div id="tierHighBar" class="progress-bar-fill" style="width: 0%; background: #6366f1;"></div></div>
+              </div>
+              <div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 0.25rem;">
+                  <span>📊 Standard Virality (&lt; 80)</span>
+                  <span id="tierStandardCount" style="font-weight: 700; color: #94a3b8;">0</span>
+                </div>
+                <div class="progress-bar-bg"><div id="tierStandardBar" class="progress-bar-fill" style="width: 0%; background: #94a3b8;"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Publishing Pipeline Status -->
+          <div class="card">
+            <div class="card-title" style="margin-bottom: 1rem;">Publishing Approval Funnel</div>
+            <div class="grid-2" style="gap: 0.75rem;">
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 0.75rem;">
+                <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Drafts Pending Review</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #fbbf24;" id="funnelDrafts">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 0.75rem;">
+                <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Scheduled in Calendar</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #60a5fa;" id="funnelScheduled">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 0.75rem;">
+                <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Approved for Posting</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #34d399;" id="funnelApproved">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 0.75rem;">
+                <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Published via Meta API</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #a78bfa;" id="funnelPublished">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Multi-Account Production Breakdown Table -->
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 1rem;">Niche Production Distribution</div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Niche Account</th>
+                  <th>Instagram Handle</th>
+                  <th>Shorts Rendered</th>
+                  <th>Share of Output</th>
+                </tr>
+              </thead>
+              <tbody id="analyticsNicheTableBody">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -2085,6 +2260,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Modal: 3-Cover High-CTR Studio -->
+  <div id="modalCovers" class="modal-overlay">
+    <div class="modal-box" style="max-width: 850px; width: 92%;">
+      <div class="modal-header">
+        <div>
+          <div style="font-size: 1.2rem; font-weight: 700; color: #f59e0b;">🖼️ High-CTR 9:16 Cover Thumbnail Studio</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted);">3 distinct psychological cover thumbnail styles formatted for 9:16 vertical feeds</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalCovers')">✕</button>
+      </div>
+
+      <div id="coversGridContainer" class="grid-3" style="margin-top: 1rem; gap: 1rem;">
+        <div style="grid-column: 1 / -1; text-align: center; padding: 2.5rem; color: #f59e0b;">
+          Rendering 3 high-CTR cover styles with FFmpeg...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Multi-Platform Export (Reels + Shorts + TikTok) -->
+  <div id="modalExport" class="modal-overlay">
+    <div class="modal-box" style="max-width: 880px; width: 92%;">
+      <div class="modal-header">
+        <div>
+          <div style="font-size: 1.2rem; font-weight: 700; color: #818cf8;">🌐 Multi-Platform Algorithm Copy Studio</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted);">Tailored copy, SEO tags & pinned comment prompts for Instagram Reels, YouTube Shorts & TikTok</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalExport')">✕</button>
+      </div>
+
+      <div id="exportTabsContainer" class="grid-3" style="margin-top: 1rem; gap: 1rem;">
+        <!-- Populated via JS -->
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notification Container -->
   <div id="toastContainer"></div>
 
@@ -2137,6 +2348,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       else if (tabId === 'library') loadLibraryShorts();
       else if (tabId === 'dubbing') loadDubbingLibrary();
       else if (tabId === 'calendar') loadPublishingQueue();
+      else if (tabId === 'analytics') loadAnalytics();
       else if (tabId === 'health') loadTelemetry();
     }
 
@@ -2347,7 +2559,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const shortsGrid = document.getElementById('overviewShortsGrid');
         const renders = rendersData.renders || [];
 
-        document.getElementById('kpiRenders').innerText = renders.length;
+        // Dynamic KPI updates from live system telemetry
+        const statsRes = await fetch(`/api/system/stats${currentGlobalAccount !== 'all' ? `?account_id=${currentGlobalAccount}` : ''}`);
+        const statsData = await statsRes.json();
+        if (statsData.stats) {
+          const s = statsData.stats;
+          document.getElementById('kpiJobs').innerText = (s.jobs_queued || 0) + (s.jobs_downloading || 0) + (s.jobs_transcribing || 0) + (s.jobs_analyzing || 0);
+          document.getElementById('kpiRenders').innerText = s.total_shorts_rendered || renders.length;
+          document.getElementById('kpiDrafts').innerText = s.publishing_draft || 0;
+          const draftsBadge = document.getElementById('navDraftsBadge');
+          if (draftsBadge) draftsBadge.innerText = s.publishing_draft || 0;
+        }
 
         if (renders.length === 0) {
           shortsGrid.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: 2rem;">No rendered shorts found for current filter.</div>`;
@@ -2783,6 +3005,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                   </button>
                   <button class="btn-secondary" style="border-color: rgba(16, 185, 129, 0.4); color: #10b981;" onclick="openRenderInDubbingLab(${topRender.id})">
                     🎙️ Dub in AI Lab
+                  </button>
+                  <button class="btn-secondary" style="border-color: rgba(245, 158, 11, 0.4); color: #f59e0b;" onclick="openCoverThumbnailsModal(${topRender.id})">
+                    🖼️ 3-Cover Studio
+                  </button>
+                  <button class="btn-secondary" style="border-color: rgba(99, 102, 241, 0.4); color: #818cf8;" onclick="openMultiPlatformExportModal(${topRender.id}, '${(topRender.title || 'Viral Short').replace(/'/g, "\\'")}', '${topRender.caption ? topRender.caption.replace(/\\n/g, ' ').replace(/'/g, "\\'") : ''}')">
+                    🌐 Multi-Platform Copy
                   </button>
                   <a href="/api/media/output/${filename}" download class="btn-secondary" style="text-decoration: none; display: flex; align-items: center; gap: 0.35rem;">
                     ⬇️ Download 9:16 Video
@@ -3700,6 +3928,164 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       } catch (e) {
         showToast('Error scheduling A/B test: ' + e.message);
       }
+    }
+
+    // --- Dynamic Real-Time Analytics Logic ---
+    async function loadAnalytics() {
+      try {
+        const url = `/api/analytics${currentGlobalAccount !== 'all' ? `?account_id=${currentGlobalAccount}` : ''}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        // 1. Top metric cards
+        document.getElementById('analyticsAvgVirality').innerText = data.avg_virality_score > 0 ? data.avg_virality_score : '--';
+        document.getElementById('analyticsScoreRange').innerText = data.total_renders > 0 ? `Range: ${data.min_virality_score} to ${data.max_virality_score}` : 'No rendered shorts yet';
+        document.getElementById('analyticsRetention').innerText = data.retention_benchmark_pct > 0 ? `${data.retention_benchmark_pct}%` : '--%';
+        document.getElementById('analyticsCadence').innerHTML = `${data.cadence.actual_rendered} <span style="font-size: 1rem; color: var(--text-muted);">Shorts</span>`;
+        document.getElementById('analyticsDailyTarget').innerText = `Daily Target: ${data.cadence.daily_target} across active network`;
+
+        // 2. Virality tiers
+        const tiers = data.virality_tiers;
+        const totalR = Math.max(1, data.total_renders);
+        document.getElementById('tierEliteCount').innerText = `${tiers.elite_90_plus} (${Math.round(tiers.elite_90_plus / totalR * 100)}%)`;
+        document.getElementById('tierEliteBar').style.width = `${Math.round(tiers.elite_90_plus / totalR * 100)}%`;
+
+        document.getElementById('tierHighCount').innerText = `${tiers.high_80_89} (${Math.round(tiers.high_80_89 / totalR * 100)}%)`;
+        document.getElementById('tierHighBar').style.width = `${Math.round(tiers.high_80_89 / totalR * 100)}%`;
+
+        document.getElementById('tierStandardCount').innerText = `${tiers.standard_under_80} (${Math.round(tiers.standard_under_80 / totalR * 100)}%)`;
+        document.getElementById('tierStandardBar').style.width = `${Math.round(tiers.standard_under_80 / totalR * 100)}%`;
+
+        // 3. Publishing Funnel
+        const pipe = data.publishing_pipeline;
+        document.getElementById('funnelDrafts').innerText = pipe.drafts;
+        document.getElementById('funnelScheduled').innerText = pipe.scheduled;
+        document.getElementById('funnelApproved').innerText = pipe.approved;
+        document.getElementById('funnelPublished').innerText = pipe.published;
+
+        // 4. Multi-Account Niche Table
+        const tbody = document.getElementById('analyticsNicheTableBody');
+        if (tbody) {
+          tbody.innerHTML = data.niche_breakdown.map(n => {
+            const share = data.total_renders > 0 ? Math.round((n.shorts_count / data.total_renders) * 100) : 0;
+            return `
+              <tr>
+                <td><b style="color: ${n.brand_color || '#6366f1'};">${n.avatar_emoji || '⚡'} ${n.name}</b> (${n.niche})</td>
+                <td><code>@${n.id.replace('acc_', '')}</code></td>
+                <td><span class="badge badge-primary">${n.shorts_count} Shorts</span></td>
+                <td>
+                  <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <div class="progress-bar-bg" style="width: 100px;"><div class="progress-bar-fill" style="width: ${share}%; background: ${n.brand_color || '#6366f1'};"></div></div>
+                    <span style="font-size: 0.75rem; color: var(--text-dim);">${share}%</span>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      } catch (e) {
+        console.error('Failed to load analytics:', e);
+      }
+    }
+
+    // --- 3-Cover High-CTR Studio Modal Logic ---
+    async function openCoverThumbnailsModal(renderId) {
+      openModal('modalCovers');
+      const container = document.getElementById('coversGridContainer');
+      container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 2.5rem; color: #f59e0b;">Rendering 3 psychological cover styles with FFmpeg...</div>';
+
+      try {
+        const res = await fetch(`/api/renders/${renderId}/covers`);
+        if (!res.ok) throw new Error('Cover generation failed');
+        const data = await res.json();
+        const covers = data.covers || [];
+
+        container.innerHTML = covers.map(c => {
+          const filename = c.path.split('/').pop().split('\\\\').pop();
+          return `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 0.85rem; display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <img src="/api/media/output/thumbnails/${filename}" style="width: 100%; border-radius: 8px; aspect-ratio: 9/16; object-fit: cover; margin-bottom: 0.75rem; border: 1px solid rgba(255,255,255,0.1);" alt="Cover Preview">
+                <div style="font-weight: 700; font-size: 0.92rem; color: #fff; margin-bottom: 0.35rem;">${c.name}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; margin-bottom: 0.5rem;">${c.description}</div>
+              </div>
+              <a href="/api/media/output/thumbnails/${filename}" download="${filename}" class="btn-primary" style="font-size: 0.8rem; text-decoration: none; text-align: center; display: block; padding: 0.45rem;">
+                ⬇️ Download 9:16 JPEG
+              </a>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        container.innerHTML = `<div style="grid-column: 1 / -1; color: #ef4444; text-align: center; padding: 2rem;">Error generating covers: ${e.message}</div>`;
+      }
+    }
+
+    // --- Multi-Platform Algorithm Copy Modal Logic ---
+    async function openMultiPlatformExportModal(renderId, title, caption) {
+      openModal('modalExport');
+      const container = document.getElementById('exportTabsContainer');
+      container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 2.5rem; color: #818cf8;">Generating algorithm-tailored copy for Reels, Shorts & TikTok...</div>';
+
+      try {
+        const account = accountsCache.find(a => a.id === currentGlobalAccount) || accountsCache[0] || {};
+        const niche = account.niche || 'Motivation';
+
+        const res = await fetch('/api/export/multi-platform', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: title || 'Viral Moment',
+            hook_text: title || 'Watch this before it is too late',
+            script_summary: caption || 'Key insights and takeaways for high impact',
+            niche: niche
+          })
+        });
+
+        const data = await res.json();
+        container.innerHTML = `
+          <!-- Instagram Reels -->
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(244, 63, 94, 0.3); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 700; font-size: 1rem; color: #f43f5e; margin-bottom: 0.25rem;">📸 Instagram Reels</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.75rem;">Optimized for save rate & shares</div>
+              <textarea class="form-textarea" rows="8" style="font-size: 0.75rem; margin-bottom: 0.75rem; width: 100%;" readonly id="copyIg">${data.instagram.caption}</textarea>
+            </div>
+            <button class="btn-primary" style="background: #f43f5e; border: none; font-size: 0.8rem;" onclick="copyBoxText('copyIg', 'Instagram Caption')">📋 Copy Reels Package</button>
+          </div>
+
+          <!-- YouTube Shorts -->
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 700; font-size: 1rem; color: #ef4444; margin-bottom: 0.25rem;">▶️ YouTube Shorts</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.75rem;">Title &lt; 60 chars + High-CTR Pinned Comment</div>
+              <div style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 2px;">SEO Title:</div>
+              <input type="text" class="form-input" style="font-size: 0.78rem; font-weight: 700; margin-bottom: 0.5rem;" value="${data.youtube_shorts.title}" id="copyYtTitle" readonly>
+              <div style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 2px;">Pinned Comment Prompt:</div>
+              <textarea class="form-textarea" rows="4" style="font-size: 0.75rem; margin-bottom: 0.75rem; width: 100%;" readonly id="copyYtComment">${data.youtube_shorts.pinned_comment}</textarea>
+            </div>
+            <button class="btn-primary" style="background: #ef4444; border: none; font-size: 0.8rem;" onclick="copyBoxText('copyYtComment', 'YouTube Pinned Comment')">📋 Copy Pinned Comment</button>
+          </div>
+
+          <!-- TikTok -->
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(6, 182, 212, 0.3); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 700; font-size: 1rem; color: #06b6d4; margin-bottom: 0.25rem;">🎵 TikTok</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.75rem;">Ultra-short conversational hook caption</div>
+              <textarea class="form-textarea" rows="8" style="font-size: 0.75rem; margin-bottom: 0.75rem; width: 100%;" readonly id="copyTikTok">${data.tiktok.caption}</textarea>
+            </div>
+            <button class="btn-primary" style="background: #06b6d4; border: none; font-size: 0.8rem;" onclick="copyBoxText('copyTikTok', 'TikTok Caption')">📋 Copy TikTok Package</button>
+          </div>
+        `;
+      } catch (e) {
+        container.innerHTML = `<div style="grid-column: 1 / -1; color: #ef4444; text-align: center; padding: 2rem;">Error formatting package: ${e.message}</div>`;
+      }
+    }
+
+    function copyBoxText(elementId, label) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      navigator.clipboard.writeText(el.value);
+      showToast(`Copied ${label} to clipboard!`);
     }
 
     // Auto-initialize on load
