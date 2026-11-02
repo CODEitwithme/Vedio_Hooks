@@ -26,6 +26,8 @@ from src.audio_ducking import apply_audio_ducking
 from src.sfx_engine import apply_transition_sfx
 from src.broll_engine import apply_hook_motion_overlay
 from src.retention_predictor import calculate_retention_curve
+from src.auto_zoom import apply_dynamic_auto_zoom
+from src.hook_banner import generate_smart_hook_text, BANNER_THEMES
 
 
 def process_video_job(job_id: str, source: str, is_url: bool = True, model_size: str = "base.en"):
@@ -135,12 +137,16 @@ def render_short_job(
     enable_jumpcuts: bool = False,
     target_language: str = "en",
     enable_sfx: bool = True,
-    enable_broll: bool = False
+    enable_broll: bool = False,
+    enable_auto_zoom: bool = False,
+    hook_banner_text: Optional[str] = None,
+    hook_banner_theme: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Renders a specific viral clip into a finished 9:16 vertical short with animated subtitles,
     optional frame-accurate jump-cut dead-air removal, sidechain audio ducking, bilingual subtitles,
-    transition whoosh SFX, and thematic B-roll pattern interrupt.
+    transition whoosh SFX, thematic B-roll pattern interrupt, dynamic punch-cut auto-zoom,
+    and top hook header banner.
     """
     job = get_job(job_id)
     if not job:
@@ -195,7 +201,7 @@ def render_short_job(
     if enable_jumpcuts:
         jumpcut_segments, active_words = calculate_jumpcuts(sliced_sub["words"], max_silence_sec=0.35)
 
-    # Step B: Create Alex Hormozi Karaoke ASS file
+    # Step B: Create Alex Hormozi Karaoke ASS file (with optional Top Hook Banner)
     create_ass_subtitles(
         words_data=active_words,
         output_ass_path=ass_path,
@@ -204,7 +210,9 @@ def render_short_job(
         font_size=70,
         words_per_chunk=3,
         margin_v=720,
-        target_language=target_language
+        target_language=target_language,
+        hook_banner_text=hook_banner_text,
+        hook_banner_theme=hook_banner_theme or theme
     )
 
     # Step C: Render with requested framing mode
@@ -298,6 +306,18 @@ def render_short_job(
         apply_hook_motion_overlay(final_video_path, broll_out, niche=niche, start_sec=0.2, end_sec=1.8)
         if os.path.exists(broll_out):
             final_video_path = broll_out
+
+    # Optional: Apply dynamic auto-zoom punch cuts
+    if enable_auto_zoom:
+        zoom_out = f"{out_base}_autozoom.mp4"
+        apply_dynamic_auto_zoom(
+            input_video_path=final_video_path,
+            output_video_path=zoom_out,
+            words=active_words,
+            zoom_scale=1.16
+        )
+        if os.path.exists(zoom_out) and os.path.getsize(zoom_out) > 0:
+            final_video_path = zoom_out
 
     # Calculate second-by-second predictive retention curve
     retention_telemetry = calculate_retention_curve(

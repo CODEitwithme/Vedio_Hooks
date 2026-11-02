@@ -22,6 +22,8 @@ Transform VedioHooks AI into a professional, production-grade, 24/7 autonomous I
 | **P11** | **Adaptive Dynamic Camera Framing & Panning** | `src/dynamic_framing.py`, `src/server.py` | **COMPLETED** | Exponential moving average (EMA) smoothing and velocity limiting tracks subjects across widescreen footage without jitter. |
 | **P12** | **Autonomous Content Deduplication & Fingerprinting** | `src/deduplication.py`, `src/server.py` | **COMPLETED** | 3-gram lexical fingerprinting and temporal segment similarity prevents cross-account duplicate video renders. |
 | **P13** | **Executive Weekly Performance Digest & Markdown Report** | `src/performance_report.py`, `src/server.py` | **COMPLETED** | 1-Click downloadable Markdown report covering multi-account production output, virality tiers, and AI strategic recommendations. |
+| **P14** | **Dynamic Auto-Zoom (Punch-Cut) Engine** | `src/auto_zoom.py`, `src/pipeline_worker.py`, `src/server.py` | **COMPLETED** | 1.16x punch-cut camera push-ins every 4-5s aligned with speech cadence & emphasis keywords to stop scroll fatigue. |
+| **P15** | **Top Hook Header Banner Studio** | `src/hook_banner.py`, `src/subtitle_generator.py`, `src/server.py` | **COMPLETED** | High-contrast scroll-stopping title pill in upper safe-zone (0-3.5s) with native ASS injection & standalone overlay filter. |
 
 ---
 

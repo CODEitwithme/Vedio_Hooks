@@ -61,3 +61,24 @@
 - **Autonomous Video Deduplication & Perceptual Fingerprinting (`src/deduplication.py`):** Calculates 3-gram lexical fingerprints and quantized temporal duration buckets. Compares candidate clips against media catalog using Jaccard similarity to prevent duplicate cross-account renders. Exposed via `POST /api/content/check-duplicate`.
 - **Executive Weekly Performance Digest & Markdown Report (`src/performance_report.py`):** Aggregates 7-day multi-account production output, virality distributions, approval funnel status, and AI strategic recommendations into downloadable Markdown and JSON. Exposed via `GET /api/reports/weekly` and 1-click export button in `tab-analytics`.
 - **Verified Test Suite:** 58 passed in 23.13s (100% pass rate). Strict zero test data contamination in production `jobs.db`.
+
+---
+
+### [Checkpoint 3.4.0] Dynamic Auto-Zoom (Punch-Cut) Engine & Top Hook Header Banner Studio (Current)
+- **Dynamic Auto-Zoom (Punch-Cut) Retention Engine (`src/auto_zoom.py`):**
+  - Eliminates stationary talking-head viewer fatigue by automatically scheduling dynamic 1.16x punch-cut camera zooms every 4.0–5.5 seconds.
+  - Aligns punch-cut cuts with emotional keywords (`SECRET`, `NEVER`, `STOP`, `DISCIPLINE`, `TRUTH`, `FIRE`, `MONEY`, `CHAMPION`, etc.) from Faster-Whisper word-level transcripts.
+  - Generates frame-accurate single-pass FFmpeg crop expressions with hardware acceleration (`h264_amf`) and CPU fallback.
+  - Exposed via `POST /api/video/auto-zoom` and integrated into `render_short_job` and the web dashboard.
+- **Top Hook Header Banner Studio (`src/hook_banner.py`):**
+  - Renders bold, high-contrast headline pills in the upper 15% safe-zone ($Y=180-240$) during the critical first 3.5 seconds (or full duration) to stop scroll fatigue.
+  - 4 psychological CTR themes: *Hormozi Yellow* (neon yellow / dark charcoal), *MrBeast Red* (white / deep crimson), *Cyber Cyan* (electric cyan / slate glass), and *Viral Emerald* (white / forest green).
+  - Dual-mode execution: Native ASS Subtitle burning (zero extra encoding passes) + standalone FFmpeg drawtext overlay with system font auto-discovery.
+  - Exposed via `POST /api/video/hook-banner` and interactive modal in the Featured Hero Showcase and Video Library.
+- **Video Factory & SaaS Dashboard Enhancements (`src/server.py`):**
+  - Added checkboxes in `tab-factory` for `⚡ Dynamic Auto-Zoom (1.16x punch-cuts)` and `🏷️ Top Hook Header Banner`.
+  - Added custom banner headline input field with smart auto-generated suggestions.
+  - Added 1-click `⚡ Apply Auto-Zoom` and `🏷️ Add Hook Banner` buttons in the Featured Hero Showcase.
+- **Automated Test Suite Expansion (`tests/test_auto_zoom_and_hook_banner.py`):**
+  - 9 new unit, integration, and API tests covering intervals calculation, ASS generation, filter expression math, standalone FFmpeg execution, and REST endpoints.
+  - **Full test suite passes: 67 passed in 36.99s (100% pass rate)** with strict zero test contamination in production `jobs.db`.

@@ -84,6 +84,8 @@ from src.sentiment_palette import classify_sentiment_and_palette
 from src.dynamic_framing import reframe_dynamic_short
 from src.deduplication import check_for_duplicate_content
 from src.performance_report import generate_weekly_executive_report
+from src.auto_zoom import apply_dynamic_auto_zoom
+from src.hook_banner import apply_standalone_hook_banner, generate_smart_hook_text, BANNER_THEMES
 
 # App lifespan with 24/7 autonomous scheduler startup & shutdown
 @asynccontextmanager
@@ -131,6 +133,24 @@ class RenderClipRequest(BaseModel):
     target_language: Optional[str] = "en"
     enable_sfx: Optional[bool] = True
     enable_broll: Optional[bool] = False
+    enable_auto_zoom: Optional[bool] = False
+    hook_banner_text: Optional[str] = None
+    hook_banner_theme: Optional[str] = None
+
+
+class AutoZoomRequest(BaseModel):
+    video_path: str
+    zoom_scale: Optional[float] = 1.16
+    job_id: Optional[str] = None
+    render_id: Optional[int] = None
+
+
+class HookBannerRequest(BaseModel):
+    video_path: str
+    hook_text: str
+    theme: Optional[str] = "hormozi_yellow"
+    duration_sec: Optional[float] = 3.5
+    render_id: Optional[int] = None
 
 
 class AutoScheduleRequest(BaseModel):
@@ -793,7 +813,10 @@ def render_clip_endpoint(job_id: str, clip_id: int, req: RenderClipRequest):
             enable_jumpcuts=bool(req.enable_jumpcuts),
             target_language=req.target_language or "en",
             enable_sfx=bool(req.enable_sfx if req.enable_sfx is not None else True),
-            enable_broll=bool(req.enable_broll)
+            enable_broll=bool(req.enable_broll),
+            enable_auto_zoom=bool(req.enable_auto_zoom),
+            hook_banner_text=req.hook_banner_text,
+            hook_banner_theme=req.hook_banner_theme
         )
         return res
     except Exception as ex:
@@ -1236,6 +1259,49 @@ def dynamic_reframe_endpoint(req: DynamicReframeRequest):
 def get_weekly_report_endpoint(account_id: Optional[str] = "all"):
     """Generates a structured weekly executive digest and Markdown report across accounts."""
     return generate_weekly_executive_report(account_id=account_id or "all")
+
+
+# --- Dynamic Auto-Zoom & Punch Cuts ---
+
+@app.post("/api/video/auto-zoom")
+def auto_zoom_endpoint(req: AutoZoomRequest):
+    """Applies dynamic 1.16x punch-cut auto-zoom to a 9:16 vertical short to maximize visual retention."""
+    try:
+        words = None
+        if req.job_id:
+            job = get_job(req.job_id)
+            if job and job.get("transcript_json_path") and os.path.exists(job["transcript_json_path"]):
+                with open(job["transcript_json_path"], "r", encoding="utf-8") as f:
+                    t_data = json.load(f)
+                words = []
+                for seg in t_data.get("segments", []):
+                    words.extend(seg.get("words", []))
+
+        result = apply_dynamic_auto_zoom(
+            input_video_path=req.video_path,
+            words=words,
+            zoom_scale=req.zoom_scale or 1.16
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Top Hook Header Banner & Attention Grabber ---
+
+@app.post("/api/video/hook-banner")
+def hook_banner_endpoint(req: HookBannerRequest):
+    """Applies high-impact top hook header banner onto a 9:16 video short."""
+    try:
+        result = apply_standalone_hook_banner(
+            video_path=req.video_path,
+            hook_text=req.hook_text,
+            theme=req.theme or "hormozi_yellow",
+            duration_sec=req.duration_sec or 3.5
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --- Premium Commercial SaaS Dashboard UI (Single-Page App) ---
@@ -1839,6 +1905,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <input type="checkbox" id="factoryBrollCheck" style="accent-color: var(--primary); cursor: pointer; width: 16px; height: 16px;">
               <span>🎨 Thematic B-Roll Pattern Interrupt Overlay</span>
             </label>
+            <label style="display: flex; align-items: center; gap: 0.6rem; font-size: 0.84rem; color: #cbd5e1; cursor: pointer;">
+              <input type="checkbox" id="factoryAutoZoomCheck" checked style="accent-color: var(--primary); cursor: pointer; width: 16px; height: 16px;">
+              <span>⚡ Dynamic Auto-Zoom (1.16x punch-cuts every 4-5s to stop scroll fatigue)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.6rem; font-size: 0.84rem; color: #cbd5e1; cursor: pointer;">
+              <input type="checkbox" id="factoryHookBannerCheck" checked style="accent-color: var(--primary); cursor: pointer; width: 16px; height: 16px;">
+              <span>🏷️ Top Hook Header Banner (High-contrast 0-3.5s title pill in safe-zone)</span>
+            </label>
+          </div>
+
+          <!-- Top Hook Header Banner Config Row -->
+          <div id="factoryHookBannerRow" style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1.25rem; background: rgba(99, 102, 241, 0.04); padding: 0.65rem 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);">
+            <span style="font-size: 0.82rem; font-weight: 700; color: #a5b4fc; white-space: nowrap;">🏷️ Top Banner Headline:</span>
+            <input type="text" id="factoryHookBannerInput" class="form-input" style="padding: 0.45rem 0.75rem; font-size: 0.85rem;" placeholder="Leave empty for smart auto-generated hook headline (e.g. BRUTAL TRUTH ABOUT SUCCESS)...">
           </div>
 
           <!-- Ingest Mode Switcher -->
@@ -2564,6 +2644,52 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
       <div id="exportTabsContainer" class="grid-3" style="margin-top: 1rem; gap: 1rem;">
         <!-- Populated via JS -->
+      </div>
+  <!-- Modal: Top Hook Header Banner Studio -->
+  <div id="modalHookBanner" class="modal-overlay">
+    <div class="modal-box" style="max-width: 620px; width: 92%;">
+      <div class="modal-header">
+        <div>
+          <div style="font-size: 1.2rem; font-weight: 700; color: #10b981;">🏷️ Top Hook Header Banner Studio</div>
+          <div style="font-size: 0.78rem; color: var(--text-muted);">Burn a high-contrast attention hook pill in the top 15% safe-zone to stop the scroll</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalHookBanner')">✕</button>
+      </div>
+
+      <input type="hidden" id="modalHookBannerRenderId">
+      <input type="hidden" id="modalHookBannerVideoPath">
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label">Banner Headline Text (All-Caps):</label>
+        <input type="text" id="modalHookBannerText" class="form-input" placeholder="e.g. THE 1 BRUTAL TRUTH ABOUT SUCCESS">
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Theme Styling Preset:</label>
+          <select id="modalHookBannerTheme" class="form-select">
+            <option value="hormozi_yellow">Hormozi Yellow (Neon Yellow / Charcoal Pill)</option>
+            <option value="beast_red">MrBeast Red (White / Deep Crimson Pill)</option>
+            <option value="cyber_cyan">Cyber Cyan (Electric Cyan / Slate Glass)</option>
+            <option value="emerald_growth">Viral Emerald (White / Deep Green Badge)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Display Duration:</label>
+          <select id="modalHookBannerDuration" class="form-select">
+            <option value="2.5">2.5 seconds (Fast Hook)</option>
+            <option value="3.5" selected>3.5 seconds (Recommended)</option>
+            <option value="5.0">5.0 seconds (Extended Hook)</option>
+            <option value="60.0">Full Duration (Entire Video)</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+        <button class="btn-secondary" onclick="closeModal('modalHookBanner')">Cancel</button>
+        <button class="btn-primary" style="background: linear-gradient(135deg, #10b981, #059669);" onclick="submitHookBannerBurn()">
+          🚀 Burn Top Hook Banner
+        </button>
       </div>
     </div>
   </div>
@@ -3294,6 +3420,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                   <button class="btn-secondary" style="border-color: rgba(14, 165, 233, 0.4); color: #0ea5e9;" onclick="applyWatermarkHero(${topRender.id}, '${topRender.video_path.replace(/\\\\/g, '/')}', '${topRender.account_id || 'acc_motivation'}')">
                     🛡️ Watermark Video
                   </button>
+                  <button class="btn-secondary" style="border-color: rgba(245, 158, 11, 0.4); color: #f59e0b;" onclick="applyAutoZoomHero(${topRender.id}, '${topRender.video_path.replace(/\\\\/g, '/')}')">
+                    ⚡ Apply Auto-Zoom
+                  </button>
+                  <button class="btn-secondary" style="border-color: rgba(16, 185, 129, 0.4); color: #10b981;" onclick="openHookBannerModal(${topRender.id}, '${topRender.video_path.replace(/\\\\/g, '/')}', '${(topRender.title || 'Viral Short').replace(/'/g, "\\'")}')">
+                    🏷️ Add Hook Banner
+                  </button>
                 </div>
 
                 <!-- Feature 2: Viral Hook A/B Studio -->
@@ -3383,6 +3515,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const enable_jumpcuts = document.getElementById('factoryJumpcutCheck') ? document.getElementById('factoryJumpcutCheck').checked : true;
       const enable_sfx = document.getElementById('factorySfxCheck') ? document.getElementById('factorySfxCheck').checked : true;
       const enable_broll = document.getElementById('factoryBrollCheck') ? document.getElementById('factoryBrollCheck').checked : false;
+      const enable_auto_zoom = document.getElementById('factoryAutoZoomCheck') ? document.getElementById('factoryAutoZoomCheck').checked : true;
+      const hook_banner_enabled = document.getElementById('factoryHookBannerCheck') ? document.getElementById('factoryHookBannerCheck').checked : true;
+      let hook_banner_text = null;
+      if (hook_banner_enabled) {
+        const inp = document.getElementById('factoryHookBannerInput');
+        hook_banner_text = (inp && inp.value.trim()) ? inp.value.trim() : null;
+      }
 
       const btn = document.getElementById(`render-btn-${clipId}`);
       if (btn) {
@@ -3395,7 +3534,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const res = await fetch(`/api/jobs/${jobId}/render/${clipId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ crop_mode, theme, enable_ducking, enable_jumpcuts, target_language, enable_sfx, enable_broll })
+          body: JSON.stringify({
+            crop_mode,
+            theme,
+            enable_ducking,
+            enable_jumpcuts,
+            target_language,
+            enable_sfx,
+            enable_broll,
+            enable_auto_zoom,
+            hook_banner_text,
+            hook_banner_theme: theme
+          })
         });
         const data = await res.json();
         showToast('Render complete! Short ready.');
@@ -4552,6 +4702,77 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         showToast('Executive report downloaded successfully!');
       } catch (e) {
         showToast('Report export failed: ' + e.message);
+      }
+    }
+
+    // --- Dynamic Auto-Zoom (Punch Cuts) ---
+    async function applyAutoZoomHero(renderId, videoPath) {
+      showToast('Applying dynamic 1.16x punch-cut auto-zoom...');
+      try {
+        const res = await fetch('/api/video/auto-zoom', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video_path: videoPath, zoom_scale: 1.16 })
+        });
+        if (!res.ok) throw new Error('Auto-zoom failed');
+        const data = await res.json();
+        const filename = data.output_path.split('/').pop().split('\\\\').pop();
+        showToast(`Auto-zoom complete (${data.punch_cuts_count} punch cuts added)!`);
+        const player = document.getElementById(`video-hero-${renderId}`);
+        if (player) {
+          player.src = `/api/media/output/${filename}`;
+          player.play();
+        }
+      } catch (e) {
+        showToast('Auto-zoom error: ' + e.message);
+      }
+    }
+
+    // --- Top Hook Header Banner Studio Modal ---
+    function openHookBannerModal(renderId, videoPath, defaultTitle) {
+      document.getElementById('modalHookBannerRenderId').value = renderId;
+      document.getElementById('modalHookBannerVideoPath').value = videoPath;
+      const cleanTitle = (defaultTitle || 'VIRAL MOMENT').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').trim();
+      document.getElementById('modalHookBannerText').value = cleanTitle.substring(0, 42);
+      openModal('modalHookBanner');
+    }
+
+    async function submitHookBannerBurn() {
+      const renderId = document.getElementById('modalHookBannerRenderId').value;
+      const videoPath = document.getElementById('modalHookBannerVideoPath').value;
+      const hookText = document.getElementById('modalHookBannerText').value.trim();
+      const theme = document.getElementById('modalHookBannerTheme').value;
+      const durationSec = parseFloat(document.getElementById('modalHookBannerDuration').value) || 3.5;
+
+      if (!hookText) {
+        alert('Please enter a banner headline text');
+        return;
+      }
+
+      closeModal('modalHookBanner');
+      showToast('Burning high-contrast top hook banner onto short...');
+      try {
+        const res = await fetch('/api/video/hook-banner', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            video_path: videoPath,
+            hook_text: hookText,
+            theme: theme,
+            duration_sec: durationSec
+          })
+        });
+        if (!res.ok) throw new Error('Hook banner failed');
+        const data = await res.json();
+        const filename = data.output_path.split('/').pop().split('\\\\').pop();
+        showToast('Top hook header banner applied successfully!');
+        const player = document.getElementById(`video-hero-${renderId}`);
+        if (player) {
+          player.src = `/api/media/output/${filename}`;
+          player.play();
+        }
+      } catch (e) {
+        showToast('Hook banner error: ' + e.message);
       }
     }
 

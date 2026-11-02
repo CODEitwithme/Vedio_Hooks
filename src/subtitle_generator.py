@@ -147,11 +147,14 @@ def create_ass_subtitles(
     play_res_y: int = 1920,
     enable_kinetic_pop: bool = True,
     enable_emoji: bool = True,
-    target_language: str = "en"
+    target_language: str = "en",
+    hook_banner_text: Optional[str] = None,
+    hook_banner_theme: Optional[str] = None,
+    hook_banner_duration: float = 3.5
 ) -> str:
     """
     Generates an ASS subtitle file with word-by-word active karaoke highlighting,
-    kinetic pop bounce animations, and contextual auto-emojis.
+    kinetic pop bounce animations, contextual auto-emojis, and optional top hook banner.
     Optionally includes secondary translated bilingual subtitles.
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_ass_path)), exist_ok=True)
@@ -188,6 +191,21 @@ def create_ass_subtitles(
     if current_chunk:
         chunks.append(current_chunk)
 
+    # Optional top hook banner elements
+    extra_styles = ""
+    banner_events: List[str] = []
+    if hook_banner_text:
+        from src.hook_banner import generate_hook_banner_ass_elements
+        b_theme = hook_banner_theme or theme_name
+        b_elems = generate_hook_banner_ass_elements(
+            hook_text=hook_banner_text,
+            theme=b_theme,
+            start_sec=0.0,
+            duration_sec=hook_banner_duration
+        )
+        extra_styles = "\n" + b_elems["style_def"]
+        banner_events.append(b_elems["dialogue_def"])
+
     # Build ASS content
     header = f"""[Script Info]
 Title: Alex Hormozi Style Karaoke Captions
@@ -201,7 +219,7 @@ PlayResY: {play_res_y}
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Hormozi,{font_name},{font_size},{theme['primary']},{theme['highlight']},{theme['outline']},{theme['shadow']},-1,0,0,0,100,100,2,0,1,5,3,2,30,30,{margin_v},1
-Style: HormoziTranslated,Arial,42,&H00E2E8F0&,&H00FFFFFF&,&H00000000&,&H80000000&,0,0,0,0,100,100,1,0,1,4,2,2,30,30,620,1
+Style: HormoziTranslated,Arial,42,&H00E2E8F0&,&H00FFFFFF&,&H00000000&,&H80000000&,0,0,0,0,100,100,1,0,1,4,2,2,30,30,620,1{extra_styles}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -209,7 +227,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     if target_language and target_language != "en":
         from src.subtitle_translator import build_bilingual_subtitle_events
-        dialogue_lines = build_bilingual_subtitle_events(
+        dialogue_lines = banner_events + build_bilingual_subtitle_events(
             chunks=chunks,
             target_lang=target_language,
             theme=theme,
@@ -219,7 +237,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             keyword_emojis_map=KEYWORD_EMOJIS
         )
     else:
-        dialogue_lines = []
+        dialogue_lines = list(banner_events)
         for chunk in chunks:
             if not chunk:
                 continue
