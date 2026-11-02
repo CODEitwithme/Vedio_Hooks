@@ -80,6 +80,10 @@ from src.hardware_accel import detect_best_video_encoder, get_ffmpeg_encoding_ar
 from src.watermark_engine import apply_watermark
 from src.batch_ingest import crawl_and_queue_playlist
 from src.insights_engine import sync_post_insights, get_account_historical_performance
+from src.sentiment_palette import classify_sentiment_and_palette
+from src.dynamic_framing import reframe_dynamic_short
+from src.deduplication import check_for_duplicate_content
+from src.performance_report import generate_weekly_executive_report
 
 # App lifespan with 24/7 autonomous scheduler startup & shutdown
 @asynccontextmanager
@@ -216,6 +220,26 @@ class InsightsSyncRequest(BaseModel):
     publishing_id: int
     account_id: Optional[str] = "acc_motivation"
     post_id: Optional[str] = None
+
+
+class SentimentPaletteRequest(BaseModel):
+    transcript_text: str
+    niche: Optional[str] = "Motivation"
+    virality_score: Optional[int] = 85
+
+
+class DuplicateCheckRequest(BaseModel):
+    transcript_text: str
+    duration_sec: Optional[float] = 0.0
+    threshold: Optional[float] = 0.75
+
+
+class DynamicReframeRequest(BaseModel):
+    video_path: str
+    start_sec: float
+    end_sec: float
+    target_width: Optional[int] = 1080
+    target_height: Optional[int] = 1920
 
 
 class PublishingDraftUpdate(BaseModel):
@@ -1162,6 +1186,56 @@ def sync_insights_endpoint(req: InsightsSyncRequest):
 def get_insights_endpoint(account_id: str):
     """Returns historical engagement analytics across tracked posts for an account."""
     return get_account_historical_performance(account_id=account_id)
+
+
+# --- AI Sentiment & Emotional Palette Auto-Tagging ---
+
+@app.post("/api/ai/sentiment-palette")
+def get_sentiment_palette_endpoint(req: SentimentPaletteRequest):
+    """Analyzes lexical sentiment, emotional intensity and domain tone to recommend visual/audio styling."""
+    return classify_sentiment_and_palette(
+        transcript_text=req.transcript_text,
+        niche=req.niche,
+        virality_score=req.virality_score
+    )
+
+
+# --- Autonomous Content Deduplication ---
+
+@app.post("/api/content/check-duplicate")
+def check_duplicate_endpoint(req: DuplicateCheckRequest):
+    """Scans existing rendered shorts in database to detect duplicate or overlapping viral clips."""
+    return check_for_duplicate_content(
+        transcript_text=req.transcript_text,
+        duration_sec=req.duration_sec or 0.0,
+        similarity_threshold=req.threshold or 0.75
+    )
+
+
+# --- Adaptive Dynamic Framing & Smooth Camera Panning ---
+
+@app.post("/api/video/dynamic-reframe")
+def dynamic_reframe_endpoint(req: DynamicReframeRequest):
+    """Renders 9:16 vertical short using adaptive smooth camera panning across widescreen footage."""
+    try:
+        out_p = reframe_dynamic_short(
+            source_video_path=req.video_path,
+            start_sec=req.start_sec,
+            end_sec=req.end_sec,
+            target_width=req.target_width or 1080,
+            target_height=req.target_height or 1920
+        )
+        return {"dynamic_video_path": out_p}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Executive Weekly Performance Report ---
+
+@app.get("/api/reports/weekly")
+def get_weekly_report_endpoint(account_id: Optional[str] = "all"):
+    """Generates a structured weekly executive digest and Markdown report across accounts."""
+    return generate_weekly_executive_report(account_id=account_id or "all")
 
 
 # --- Premium Commercial SaaS Dashboard UI (Single-Page App) ---
@@ -2144,7 +2218,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <div class="card-title">Real-Time Operational Analytics & Virality Telemetry</div>
               <div class="card-subtitle">Live database performance metrics calculated across multi-account vertical production</div>
             </div>
-            <button class="btn-secondary" style="font-size: 0.82rem;" onclick="loadAnalytics()">🔄 Refresh Analytics</button>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <button class="btn-primary" style="font-size: 0.82rem; background: linear-gradient(135deg, #6366f1, #10b981);" onclick="downloadExecutiveReport()">
+                📄 Export Weekly Report (.md)
+              </button>
+              <button class="btn-secondary" style="font-size: 0.82rem;" onclick="loadAnalytics()">🔄 Refresh Analytics</button>
+            </div>
           </div>
         </div>
 
@@ -4450,6 +4529,29 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
       } catch (e) {
         console.error('Failed to load insights:', e);
+      }
+    }
+
+    // --- Executive Weekly Media Factory Report Export ---
+    async function downloadExecutiveReport() {
+      showToast('Generating executive weekly media factory report...');
+      try {
+        const accountId = (currentGlobalAccount && currentGlobalAccount !== 'all') ? currentGlobalAccount : 'all';
+        const res = await fetch(`/api/reports/weekly?account_id=${accountId}`);
+        if (!res.ok) throw new Error('Failed to generate report');
+        const data = await res.json();
+        const blob = new Blob([data.markdown_report], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `VedioHooks_Weekly_Executive_Report_${accountId}_${data.generated_at}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Executive report downloaded successfully!');
+      } catch (e) {
+        showToast('Report export failed: ' + e.message);
       }
     }
 

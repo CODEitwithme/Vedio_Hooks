@@ -47,9 +47,17 @@
 
 ---
 
-### [Checkpoint 3.2.0] Hardware Acceleration, Batch Ingestion, Watermarking & Engagement Feedback (Current)
+### [Checkpoint 3.2.0] Hardware Acceleration, Batch Ingestion, Watermarking & Engagement Feedback
 - **Hardware Acceleration Auto-Negotiation Engine (`src/hardware_accel.py`):** Automatically probes FFmpeg hardware encoders (`h264_nvenc`, `h264_amf`, `h264_qsv`, `h264_mf`) via micro-frame execution; auto-negotiated active `h264_amf` (AMD AMF) on this host machine with graceful fallback to `libx264`. Exposed via `GET /api/system/hardware` and sticky header pill badge.
 - **Account Watermark & Repost Protection Engine (`src/watermark_engine.py`):** Burns high-contrast semi-transparent account badges (`@account_handle`) in 4 configurable corner positions with dynamic opacity and font auto-discovery to prevent repost theft. Exposed via `POST /api/watermark/apply` and 1-click button in Featured Hero Showcase.
 - **Batch Playlist & Channel Autonomous Ingest Engine (`src/batch_ingest.py`):** Flat-metadata extraction using `yt-dlp` (`extract_flat=True`, `skip_download=True`) discovering 20+ playlist items in $<1.5$s, filtering by duration (30s-60m) and deduplicating before enqueuing batch jobs into SQLite. Added frontend switcher tab in `tab-factory`.
 - **Instagram Insights & Real Engagement Feedback Engine (`src/insights_engine.py`):** Official Meta Graph API v19.0+ metrics query (`video_views`, `impressions`, `reach`, `likes`, `comments`, `shares`, `retention_rate`) with zero-scraping compliant simulation fallback. Stores performance history in `analytics_metrics` table to feed continuous virality weight optimization.
-- **Verified Test Suite:** 54 passed in 22.13s (100% pass rate). Strict zero test data contamination in production `jobs.db`.
+
+---
+
+### [Checkpoint 3.3.0] Sentiment Palette, Dynamic Camera Framing, Deduplication & Executive Digest (Current)
+- **AI Sentiment & Emotional Palette Auto-Tagging (`src/sentiment_palette.py`):** Classifies lexical urgency, emotional intensity, and domain polarity across transcripts. Auto-recommends optimal subtitle styling (`cyber_cyan`, `crimson_bold`, `neon_green`, `emerald_growth`, `hormozi_yellow`), ambient music profile, ducking depth, and contextual emoji packs. Exposed via `POST /api/ai/sentiment-palette`.
+- **Adaptive Dynamic Framing & Smooth Camera Panning (`src/dynamic_framing.py`):** Tracks speakers across 16:9 widescreen footage using Exponential Moving Average (EMA) smoothing and velocity limiting to reframe 9:16 vertical shorts with cinematic gimbal-like camera motion. Exposed via `POST /api/video/dynamic-reframe`.
+- **Autonomous Video Deduplication & Perceptual Fingerprinting (`src/deduplication.py`):** Calculates 3-gram lexical fingerprints and quantized temporal duration buckets. Compares candidate clips against media catalog using Jaccard similarity to prevent duplicate cross-account renders. Exposed via `POST /api/content/check-duplicate`.
+- **Executive Weekly Performance Digest & Markdown Report (`src/performance_report.py`):** Aggregates 7-day multi-account production output, virality distributions, approval funnel status, and AI strategic recommendations into downloadable Markdown and JSON. Exposed via `GET /api/reports/weekly` and 1-click export button in `tab-analytics`.
+- **Verified Test Suite:** 58 passed in 23.13s (100% pass rate). Strict zero test data contamination in production `jobs.db`.

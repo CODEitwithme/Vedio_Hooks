@@ -1157,6 +1157,141 @@ def test_instagram_insights_sync_and_history():
     assert res_get.json()["total_tracked_posts"] >= 1
 
 
+def test_sentiment_palette_analysis():
+    """Verifies lexical sentiment classification and emotional visual/audio palette auto-tagging."""
+    from src.sentiment_palette import classify_sentiment_and_palette
+
+    # 1. Tech & AI Educational test
+    tech_res = classify_sentiment_and_palette(
+        "Here is the secret AI tool that helps students write code in half the time.",
+        niche="AI & Study"
+    )
+    assert tech_res["recommended_theme"] == "cyber_cyan"
+    assert tech_res["ambient_music_mood"] == "lofi_focus"
+    assert "⚡" in tech_res["contextual_emojis"]
+
+    # 2. Gym & Fitness Power test
+    gym_res = classify_sentiment_and_palette(
+        "Stop making this dangerous squat mistake! Your knees and muscle hypertrophy require proper biomechanics.",
+        niche="Gym & Fitness"
+    )
+    assert gym_res["recommended_theme"] == "crimson_bold"
+    assert gym_res["ambient_music_mood"] == "high_energy_trap"
+    assert "💪" in gym_res["contextual_emojis"]
+
+    # 3. Cricket Stadium test
+    cricket_res = classify_sentiment_and_palette(
+        "Kohli hit two sixes in the final over of the world cup championship match!",
+        niche="Cricket"
+    )
+    assert cricket_res["recommended_theme"] == "neon_green"
+    assert cricket_res["ambient_music_mood"] == "epic_strings"
+
+    # 4. API endpoint test
+    res = client.post("/api/ai/sentiment-palette", json={
+        "transcript_text": "Never stop fighting. Discipline is what separates winners from losers.",
+        "niche": "Motivation"
+    })
+    assert res.status_code == 200
+    assert res.json()["recommended_theme"] == "hormozi_yellow"
+
+
+def test_dynamic_framing_trajectory_and_reframe():
+    """Verifies EMA camera panning trajectory calculation and dynamic 9:16 vertical re-framing."""
+    import subprocess
+    from src.dynamic_framing import calculate_smooth_camera_trajectory, build_segmented_pan_filter, reframe_dynamic_short
+    from src.ingest import get_media_info
+
+    # 1. Trajectory calculation test
+    times = [0.0, 0.5, 1.0, 1.5, 2.0]
+    raw_x = [0.2, 0.25, 0.75, 0.8, 0.8]  # Speaker moves from left (0.2) to right (0.8)
+    smoothed = calculate_smooth_camera_trajectory(times, raw_x, alpha=0.35, max_velocity_per_sec=0.40)
+    assert len(smoothed) == len(times)
+    # Velocity limit should prevent instant jump
+    assert smoothed[2] < 0.75
+    # Smooth continuous progression
+    assert smoothed[0] <= smoothed[1] <= smoothed[2] <= smoothed[3]
+
+    # 2. Filter string construction test
+    f_str = build_segmented_pan_filter(times, smoothed, target_width=1080, target_height=1920)
+    assert "crop=" in f_str
+    assert "scale=1080:1920" in f_str
+
+    # 3. End-to-end rendering execution test
+    os.makedirs("temp", exist_ok=True)
+    raw_video = "temp/test_dynamic_framing_src.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=25",
+        "-f", "lavfi", "-i", "sine=frequency=440",
+        "-t", "1.5",
+        "-c:v", "libx264", "-preset", "ultrafast",
+        "-c:a", "aac",
+        raw_video
+    ]
+    subprocess.run(cmd, capture_output=True)
+
+    out_dynamic = "temp/test_dynamic_framing_out.mp4"
+    rendered = reframe_dynamic_short(raw_video, start_sec=0.0, end_sec=1.5, output_path=out_dynamic)
+    assert os.path.exists(rendered)
+    info = get_media_info(rendered)
+    assert info["width"] == 1080
+    assert info["height"] == 1920
+
+    # 4. API test
+    res = client.post("/api/video/dynamic-reframe", json={
+        "video_path": raw_video,
+        "start_sec": 0.0,
+        "end_sec": 1.0
+    })
+    assert res.status_code == 200
+    assert os.path.exists(res.json()["dynamic_video_path"])
+
+
+def test_content_deduplication_and_fingerprinting():
+    """Verifies perceptual fingerprinting, lexical n-gram similarity, and collision prevention."""
+    from src.deduplication import compute_content_fingerprint, calculate_jaccard_similarity, check_for_duplicate_content
+
+    fp1 = compute_content_fingerprint("Why 99% of people quit in the first 30 days of building discipline", duration_sec=18.0)
+    fp2 = compute_content_fingerprint("Why 99% of people quit in the first 30 days of building discipline", duration_sec=18.2)
+    assert fp1 == fp2  # Quantized duration bucketing matches
+
+    # Similarity check
+    tokens_a = ["discipline", "habits", "success", "motivation", "morning"]
+    tokens_b = ["discipline", "habits", "success", "mindset", "routine"]
+    sim = calculate_jaccard_similarity(tokens_a, tokens_b)
+    assert sim >= 0.40
+
+    # Duplicate scanner API test
+    res = client.post("/api/content/check-duplicate", json={
+        "transcript_text": "A brand new unique topic about neuroscience and deep focus techniques.",
+        "duration_sec": 22.0
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert "candidate_fingerprint" in data
+    assert "is_duplicate" in data
+    assert "recommendation" in data
+
+
+def test_weekly_executive_report_generation():
+    """Verifies executive digest aggregation and downloadable Markdown report generation."""
+    from src.performance_report import generate_weekly_executive_report
+
+    report = generate_weekly_executive_report(account_id="all")
+    assert "total_renders" in report
+    assert "avg_virality_score" in report
+    assert "markdown_report" in report
+    assert "# 📊 VedioHooks AI — Weekly Executive Media Factory Report" in report["markdown_report"]
+    assert "Strategic AI Production Recommendations" in report["markdown_report"]
+
+    # API endpoint test
+    res = client.get("/api/reports/weekly?account_id=all")
+    assert res.status_code == 200
+    assert "markdown_report" in res.json()
+
+
+
 
 
 

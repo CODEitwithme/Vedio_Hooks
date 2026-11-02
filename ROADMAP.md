@@ -18,14 +18,18 @@ Transform VedioHooks AI into a professional, production-grade, 24/7 autonomous I
 | **P7** | **Account Watermark & Repost Protection** | `src/watermark_engine.py`, `src/server.py` | **COMPLETED** | Burns semi-transparent account badges (`@apex_discipline`) with font auto-discovery and hardware acceleration into vertical shorts. |
 | **P8** | **Batch Playlist Autonomous Ingestion** | `src/batch_ingest.py`, `src/server.py` | **COMPLETED** | Fast flat-metadata inspection crawls YouTube playlists and channels without upfront raw downloads, enqueuing batch jobs. |
 | **P9** | **Instagram Insights & Engagement Feedback** | `src/insights_engine.py`, `src/server.py` | **COMPLETED** | Meta Graph API v19.0 integration recording views, likes, shares, and retention into SQLite to continuously calibrate virality weights. |
+| **P10** | **AI Sentiment & Emotional Palette Auto-Tagging** | `src/sentiment_palette.py`, `src/server.py` | **COMPLETED** | Analyzes transcript emotional intensity and domain tone; auto-recommends subtitle theme, ambient music, ducking, and emojis. |
+| **P11** | **Adaptive Dynamic Camera Framing & Panning** | `src/dynamic_framing.py`, `src/server.py` | **COMPLETED** | Exponential moving average (EMA) smoothing and velocity limiting tracks subjects across widescreen footage without jitter. |
+| **P12** | **Autonomous Content Deduplication & Fingerprinting** | `src/deduplication.py`, `src/server.py` | **COMPLETED** | 3-gram lexical fingerprinting and temporal segment similarity prevents cross-account duplicate video renders. |
+| **P13** | **Executive Weekly Performance Digest & Markdown Report** | `src/performance_report.py`, `src/server.py` | **COMPLETED** | 1-Click downloadable Markdown report covering multi-account production output, virality tiers, and AI strategic recommendations. |
 
 ---
 
 ## Next Milestone: Advanced Multi-Account Autonomy
-1. **Adaptive Dynamic Crop Framing:** Multi-face tracking with automatic speaker-switch panning (camera dynamically centers whoever is actively talking).
-2. **AI Caption Voice & Sentiment Auto-Tagging:** Automatically classify mood/sentiment (inspiring, aggressive, informative) to select optimal background music tracks and subtitle color palettes.
-3. **Automated Weekly Email / Telegram Digest:** Generate an executive PDF or Markdown summary of top-performing reels and weekly follower growth per account.
-4. **Autonomous Repost Detection & De-duplication:** Perceptual audio/video fingerprinting (e.g. chromaprint or pHash) to prevent re-rendering clips from identical source segments.
+1. **Interactive Visual Clip Trimmer UI:** Live video scrubber allowing creators to preview and adjust clip in/out boundaries before queueing renders.
+2. **Autonomous Repost Detection & Fingerprinting at Ingestion:** Proactive warning banner during URL / playlist intake if identical footage is detected.
+3. **Automated Weekly Email / Telegram Digest Bot:** Webhook to dispatch the generated executive markdown report to a Discord / Telegram channel.
+4. **Bilingual Dual-Audio Track Multiplexing:** Embed alternate translated audio track as selectable multi-track audio stream.
 
 ---
 
