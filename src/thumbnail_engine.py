@@ -13,6 +13,21 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 
+def find_system_font() -> Optional[str]:
+    """Finds a robust system font (Windows, Linux, or macOS)."""
+    candidates = [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/calibri.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc"
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+
 def extract_keyframe(video_path: str, time_sec: float = 1.0, output_path: Optional[str] = None) -> str:
     """Extracts a high-quality keyframe from the vertical video using FFmpeg."""
     if not output_path:
@@ -57,12 +72,15 @@ def generate_cover_thumbnails(
 
     unique_id = uuid.uuid4().hex[:8]
     covers = []
+    font_file = find_system_font()
+    font_opt = f":fontfile='{font_file.replace(':', r'\:')}'" if font_file else ""
 
     # --- Style 1: Bold Kinetic Box Banner (Hormozi Style) ---
     style1_path = os.path.join(output_dir, f"cover_hormozi_{unique_id}.jpg")
     filter1 = (
         f"drawtext="
-        f"text='{multiline_text}':"
+        f"text='{multiline_text}'"
+        f"{font_opt}:"
         f"fontsize=68:"
         f"fontcolor=white:"
         f"box=1:"
@@ -91,7 +109,8 @@ def generate_cover_thumbnails(
         f"crop=in_w*0.9:in_h*0.9:(in_w-out_w)/2:(in_h-out_h)/2,"
         f"scale=1080:1920,"
         f"eq=saturation=1.25:contrast=1.12,"
-        f"drawtext=text='{multiline_text}':"
+        f"drawtext=text='{multiline_text}'"
+        f"{font_opt}:"
         f"fontsize=74:fontcolor=yellow:box=1:boxcolor=black@0.85:boxborderw=20:"
         f"x=(w-text_w)/2:y=(h*0.20)"
     )
@@ -113,7 +132,8 @@ def generate_cover_thumbnails(
     # Subtle vignette + elegant lower third typography
     filter3 = (
         f"vignette=PI/4,"
-        f"drawtext=text='{headline_text}':"
+        f"drawtext=text='{headline_text}'"
+        f"{font_opt}:"
         f"fontsize=54:fontcolor=white:box=1:boxcolor=black@0.65:boxborderw=16:"
         f"x=(w-text_w)/2:y=(h*0.78)"
     )

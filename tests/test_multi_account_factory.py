@@ -995,6 +995,169 @@ def test_multi_platform_export_formatting():
     assert res.json()["youtube_shorts"]["title"].endswith("#Shorts")
 
 
+def test_hardware_acceleration_detection():
+    """Verifies GPU encoder auto-negotiation and FFmpeg argument generation."""
+    from src.hardware_accel import detect_best_video_encoder, get_ffmpeg_encoding_args
+
+    info = detect_best_video_encoder()
+    assert "encoder" in info
+    assert "device" in info
+    assert "hw" in info
+    assert isinstance(info["args"], list)
+
+    args = get_ffmpeg_encoding_args()
+    assert len(args) >= 2
+    assert "-c:v" in args
+
+    # API test
+    res = client.get("/api/system/hardware")
+    assert res.status_code == 200
+    data = res.json()
+    assert "encoder" in data
+    assert "device" in data
+
+
+def test_watermark_rendering():
+    """Verifies burning subtle, high-contrast account handle badge into 9:16 vertical shorts."""
+    import subprocess
+    from src.watermark_engine import apply_watermark, build_watermark_drawtext_filter
+    from src.ingest import get_media_info
+
+    # 1. Filter string verification
+    f_str = build_watermark_drawtext_filter("@apex_discipline", position="top_right", opacity=0.75)
+    assert "@apex_discipline" in f_str
+    assert "fontsize=34" in f_str
+    assert "box=1" in f_str
+
+    # 2. Render execution test
+    os.makedirs("temp", exist_ok=True)
+    src_video = "temp/test_watermark_src.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "testsrc=size=360x640:rate=25",
+        "-t", "1.5",
+        "-c:v", "libx264", "-preset", "ultrafast",
+        src_video
+    ]
+    subprocess.run(cmd, capture_output=True)
+
+    out_wm = "temp/test_watermarked_out.mp4"
+    res_path = apply_watermark(src_video, handle="@apex_discipline", output_path=out_wm)
+    assert os.path.exists(res_path)
+    info = get_media_info(res_path)
+    assert info["width"] == 360
+    assert info["height"] == 640
+
+    # 3. API test
+    res = client.post("/api/watermark/apply", json={
+        "video_path": src_video,
+        "handle": "@apex_discipline",
+        "position": "top_right",
+        "opacity": 0.75
+    })
+    assert res.status_code == 200
+    assert os.path.exists(res.json()["watermarked_video_path"])
+
+
+def test_batch_playlist_ingest(monkeypatch):
+    """Verifies flat-metadata playlist extraction and autonomous queue ingestion."""
+    from src.batch_ingest import crawl_and_queue_playlist
+    from unittest.mock import MagicMock
+    import yt_dlp
+
+    # Mock YoutubeDL to prevent real external network calls in unit tests
+    mock_playlist_payload = {
+        "title": "Top Motivation Playlist",
+        "entries": [
+            {"id": "vid101", "url": "https://www.youtube.com/watch?v=vid101", "title": "Never Give Up Speech", "duration": 180.0},
+            {"id": "vid102", "url": "https://www.youtube.com/watch?v=vid102", "title": "Discipline vs Motivation", "duration": 240.0},
+            {"id": "vid103", "url": "https://www.youtube.com/watch?v=vid103", "title": "Morning Routine of High Performers", "duration": 300.0},
+            {"id": "vid104", "url": "https://www.youtube.com/watch?v=vid104", "title": "Ultra Short Teaser", "duration": 20.0}  # Below min duration
+        ]
+    }
+
+    mock_ydl = MagicMock()
+    mock_ydl.extract_info.return_value = mock_playlist_payload
+    mock_ydl.__enter__.return_value = mock_ydl
+    mock_ydl.__exit__.return_value = None
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", lambda *args, **kwargs: mock_ydl)
+
+    res = crawl_and_queue_playlist(
+        playlist_url="https://www.youtube.com/playlist?list=PLmock123",
+        account_id="acc_motivation",
+        max_items=3,
+        min_duration_sec=60.0
+    )
+
+    assert res["total_discovered"] == 4
+    assert res["queued_count"] == 3
+    assert len(res["queued_jobs"]) == 3
+    assert res["queued_jobs"][0]["job_id"] is not None
+
+    # API test
+    res_api = client.post("/api/jobs/batch-playlist", json={
+        "playlist_url": "https://www.youtube.com/playlist?list=PLmock123",
+        "account_id": "acc_motivation",
+        "max_items": 2,
+        "min_duration_sec": 60.0
+    })
+    assert res_api.status_code == 200
+    assert "queued_count" in res_api.json()
+
+
+def test_instagram_insights_sync_and_history():
+    """Verifies Meta Graph API v19.0 insights syncing and account historical metrics telemetry."""
+    from src.insights_engine import sync_post_insights, get_account_historical_performance
+
+    test_job_id = f"job_ins_{uuid.uuid4().hex[:8]}"
+    create_job(test_job_id, "url", "https://example.com/insights", account_id="acc_motivation")
+    render_id = save_rendered_short(
+        job_id=test_job_id,
+        clip_id=1,
+        title="Insights Metric Test Reel",
+        start_time=0.0,
+        end_time=2.0,
+        virality_score=94,
+        crop_mode="smart_face",
+        theme="hormozi_yellow",
+        video_path="temp/test_ins_render.mp4",
+        caption="High performance insights test",
+        hashtags="#insights #growth",
+        account_id="acc_motivation"
+    )
+
+    draft_res = client.post(f"/api/renders/{render_id}/send-to-draft")
+    pub_id = draft_res.json()["publishing_id"]
+
+    # 1. Sync insights
+    telemetry = sync_post_insights(publishing_id=pub_id, account_id="acc_motivation")
+    assert telemetry["publishing_id"] == pub_id
+    assert telemetry["account_id"] == "acc_motivation"
+    assert telemetry["views"] > 0
+    assert telemetry["likes"] > 0
+    assert telemetry["retention_rate"] >= 70.0
+
+    # 2. Historical performance aggregation
+    hist = get_account_historical_performance(account_id="acc_motivation")
+    assert hist["total_tracked_posts"] >= 1
+    assert hist["aggregates"]["total_views"] > 0
+    assert hist["aggregates"]["avg_retention_rate"] > 0
+
+    # 3. API endpoints test
+    res_sync = client.post("/api/insights/sync", json={
+        "publishing_id": pub_id,
+        "account_id": "acc_motivation"
+    })
+    assert res_sync.status_code == 200
+    assert res_sync.json()["views"] > 0
+
+    res_get = client.get("/api/insights/acc_motivation")
+    assert res_get.status_code == 200
+    assert res_get.json()["total_tracked_posts"] >= 1
+
+
+
 
 
 

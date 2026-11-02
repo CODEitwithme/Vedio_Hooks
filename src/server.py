@@ -76,6 +76,10 @@ from src.analytics import get_performance_analytics
 from src.thumbnail_engine import generate_cover_thumbnails
 from src.beat_sync import detect_audio_beats, align_word_timestamps_to_beats
 from src.multi_platform_export import generate_multi_platform_package
+from src.hardware_accel import detect_best_video_encoder, get_ffmpeg_encoding_args
+from src.watermark_engine import apply_watermark
+from src.batch_ingest import crawl_and_queue_playlist
+from src.insights_engine import sync_post_insights, get_account_historical_performance
 
 # App lifespan with 24/7 autonomous scheduler startup & shutdown
 @asynccontextmanager
@@ -191,6 +195,27 @@ class MultiPlatformExportRequest(BaseModel):
     script_summary: str
     niche: Optional[str] = "Motivation"
     base_hashtags: Optional[str] = None
+
+
+class WatermarkApplyRequest(BaseModel):
+    video_path: str
+    handle: Optional[str] = "@vediohooks"
+    position: Optional[str] = "top_right"
+    opacity: Optional[float] = 0.75
+
+
+class BatchIngestRequest(BaseModel):
+    playlist_url: str
+    account_id: Optional[str] = "acc_motivation"
+    max_items: Optional[int] = 5
+    min_duration_sec: Optional[float] = 60.0
+    max_duration_sec: Optional[float] = 3600.0
+
+
+class InsightsSyncRequest(BaseModel):
+    publishing_id: int
+    account_id: Optional[str] = "acc_motivation"
+    post_id: Optional[str] = None
 
 
 class PublishingDraftUpdate(BaseModel):
@@ -1077,6 +1102,68 @@ def export_multi_platform_endpoint(req: MultiPlatformExportRequest):
     return package
 
 
+# --- Hardware Acceleration Probing ---
+
+@app.get("/api/system/hardware")
+def get_hardware_acceleration():
+    """Probes GPU/Hardware acceleration capabilities (NVENC, AMF, QSV, MediaFoundation)."""
+    return detect_best_video_encoder()
+
+
+# --- Account Watermark & Branding ---
+
+@app.post("/api/watermark/apply")
+def apply_watermark_endpoint(req: WatermarkApplyRequest):
+    """Burns semi-transparent account watermark into vertical short to prevent repost theft."""
+    try:
+        out_path = apply_watermark(
+            source_video_path=req.video_path,
+            handle=req.handle or "@vediohooks",
+            position=req.position or "top_right",
+            opacity=req.opacity or 0.75
+        )
+        return {"watermarked_video_path": out_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Batch Playlist Autonomous Ingest ---
+
+@app.post("/api/jobs/batch-playlist")
+def batch_playlist_endpoint(req: BatchIngestRequest):
+    """Crawls a YouTube playlist or channel and enqueues multiple videos autonomously."""
+    try:
+        res = crawl_and_queue_playlist(
+            playlist_url=req.playlist_url,
+            account_id=req.account_id or "acc_motivation",
+            max_items=req.max_items or 5,
+            min_duration_sec=req.min_duration_sec or 60.0,
+            max_duration_sec=req.max_duration_sec or 3600.0
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- Instagram Insights & Real Engagement Feedback ---
+
+@app.post("/api/insights/sync")
+def sync_insights_endpoint(req: InsightsSyncRequest):
+    """Syncs real Meta Graph API v19.0+ engagement insights or compliant simulation baseline."""
+    res = sync_post_insights(
+        publishing_id=req.publishing_id,
+        account_id=req.account_id or "acc_motivation",
+        post_id=req.post_id
+    )
+    return res
+
+
+@app.get("/api/insights/{account_id}")
+def get_insights_endpoint(account_id: str):
+    """Returns historical engagement analytics across tracked posts for an account."""
+    return get_account_historical_performance(account_id=account_id)
+
+
 # --- Premium Commercial SaaS Dashboard UI (Single-Page App) ---
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -1428,6 +1515,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
 
       <div class="header-right">
+        <div id="hwAccelBadge" style="display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.65rem; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 9999px; font-size: 0.75rem; color: #10b981; font-weight: 600;">
+          <span>⚡</span>
+          <span id="hwAccelText">Hardware Accelerated</span>
+        </div>
         <button id="btnEmergencyStop" class="btn-emergency" onclick="toggleEmergencyStop()">
           <span class="pulse-dot stopped" id="emergencyDot" style="display: none;"></span>
           <span id="emergencyBtnText">EMERGENCY STOP</span>
@@ -1676,17 +1767,81 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </label>
           </div>
 
-          <div style="display: flex; gap: 0.75rem; margin-bottom: 1.5rem;">
-            <input type="text" id="urlInput" class="form-input" placeholder="Paste YouTube / Web Video URL (e.g., https://www.youtube.com/watch?v=...)">
-            <button class="btn-primary" style="white-space: nowrap;" onclick="submitUrlJob()">Analyze URL</button>
+          <!-- Ingest Mode Switcher -->
+          <div style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: 0.6rem;">
+            <button id="btnModeSingle" class="btn-primary" style="font-size: 0.82rem; padding: 0.45rem 1rem;" onclick="setIngestMode('single')">
+              🎬 Single Video Ingest
+            </button>
+            <button id="btnModeBatch" class="btn-secondary" style="font-size: 0.82rem; padding: 0.45rem 1rem;" onclick="setIngestMode('batch')">
+              📚 Autonomous Playlist / Channel Ingest
+            </button>
           </div>
 
-          <div style="border-top: 1px solid var(--border); padding-top: 1.25rem;">
-            <div class="form-label" style="margin-bottom: 0.5rem;">Or Upload a Local Video File:</div>
-            <div style="display: flex; gap: 0.75rem; align-items: center;">
-              <input type="file" id="fileInput" accept="video/*" class="form-input" style="padding: 0.4rem;">
-              <button class="btn-secondary" style="white-space: nowrap;" onclick="uploadFileJob()">Upload & Process</button>
+          <!-- Mode 1: Single Video Container -->
+          <div id="containerSingleIngest">
+            <div style="display: flex; gap: 0.75rem; margin-bottom: 1.5rem;">
+              <input type="text" id="urlInput" class="form-input" placeholder="Paste YouTube / Web Video URL (e.g., https://www.youtube.com/watch?v=...)">
+              <button class="btn-primary" style="white-space: nowrap;" onclick="submitUrlJob()">Analyze URL</button>
             </div>
+
+            <div style="border-top: 1px solid var(--border); padding-top: 1.25rem;">
+              <div class="form-label" style="margin-bottom: 0.5rem;">Or Upload a Local Video File:</div>
+              <div style="display: flex; gap: 0.75rem; align-items: center;">
+                <input type="file" id="fileInput" accept="video/*" class="form-input" style="padding: 0.4rem;">
+                <button class="btn-secondary" style="white-space: nowrap;" onclick="uploadFileJob()">Upload & Process</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Mode 2: Batch Playlist / Channel Ingest Container -->
+          <div id="containerBatchIngest" style="display: none;">
+            <div style="background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
+              <div style="font-size: 0.85rem; color: #818cf8; font-weight: 600; margin-bottom: 0.35rem;">
+                ⚡ Autonomous Fast Flat-Metadata Crawl (Zero large downloads upfront)
+              </div>
+              <div style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.5;">
+                Enter a YouTube Playlist or Channel Videos URL. The engine scans candidates in flat mode, checks duration, filters duplicates, and queues high-probability viral source videos into the SQLite pipeline.
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem;">
+              <input type="text" id="batchPlaylistInput" class="form-input" placeholder="Paste YouTube Playlist or Channel URL (e.g., https://www.youtube.com/playlist?list=...)">
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+              <div>
+                <label class="form-label">Max Videos to Ingest:</label>
+                <select id="batchMaxItems" class="form-select">
+                  <option value="3">3 Videos</option>
+                  <option value="5" selected>5 Videos (Recommended)</option>
+                  <option value="10">10 Videos</option>
+                  <option value="20">20 Videos</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Min Video Duration:</label>
+                <select id="batchMinDuration" class="form-select">
+                  <option value="30">30 seconds</option>
+                  <option value="60" selected>1 minute</option>
+                  <option value="180">3 minutes</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Max Video Duration:</label>
+                <select id="batchMaxDuration" class="form-select">
+                  <option value="900">15 minutes</option>
+                  <option value="1800" selected>30 minutes</option>
+                  <option value="3600">60 minutes</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end;">
+              <button class="btn-primary" style="white-space: nowrap; background: linear-gradient(135deg, #6366f1, #4f46e5);" onclick="submitBatchPlaylistJob()">
+                🚀 Crawl &amp; Enqueue Batch Jobs
+              </button>
+            </div>
+            <div id="batchIngestResult" style="margin-top: 1rem; font-size: 0.85rem; display: none;"></div>
           </div>
         </div>
 
@@ -1938,6 +2093,44 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <div><b>INSTAGRAM_ACCOUNT_ID:</b> <span id="envIgAccount" style="font-family: monospace;">Configured via .env</span></div>
                 <div><b>ACCESS_TOKEN_STATUS:</b> <span id="envIgToken">Ready for OAuth credentials</span></div>
               </div>
+            </div>
+          </div>
+
+          <!-- Instagram Insights & Telemetry Sync Section -->
+          <div class="card" style="margin-top: 1.25rem; background: rgba(0,0,0,0.25);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <div style="font-weight: 700; color: #f43f5e; font-size: 1.05rem;">Meta Graph API Insights &amp; Engagement Telemetry</div>
+                <div style="font-size: 0.78rem; color: var(--text-muted);">Real-time engagement feedback loop across views, reach, saves &amp; completion rate</div>
+              </div>
+              <button class="btn-secondary" style="font-size: 0.8rem; border-color: rgba(244, 63, 94, 0.4); color: #f43f5e;" onclick="loadInstagramInsights()">
+                🔄 Sync Insights Telemetry
+              </button>
+            </div>
+            <div class="grid-4" style="margin-bottom: 1rem;">
+              <div class="metric-card">
+                <span class="metric-label">Tracked Posts</span>
+                <span class="metric-value" id="igMetricPosts">0</span>
+                <span class="metric-detail">Verified reels with metrics</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Total Views / Impressions</span>
+                <span class="metric-value" id="igMetricViews" style="color: #60a5fa;">0</span>
+                <span class="metric-detail">Combined reel impressions</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Total Interactions</span>
+                <span class="metric-value" id="igMetricInteractions" style="color: #f43f5e;">0</span>
+                <span class="metric-detail">Likes, comments &amp; shares</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Avg Retention Rate</span>
+                <span class="metric-value" id="igMetricRetention" style="color: #34d399;">--%</span>
+                <span class="metric-detail">Audience completion rate</span>
+              </div>
+            </div>
+            <div id="igInsightsTableContainer" style="font-size: 0.82rem; color: var(--text-muted);">
+              <!-- Recent Insights Log -->
             </div>
           </div>
         </div>
@@ -2349,6 +2542,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       else if (tabId === 'dubbing') loadDubbingLibrary();
       else if (tabId === 'calendar') loadPublishingQueue();
       else if (tabId === 'analytics') loadAnalytics();
+      else if (tabId === 'instagram') loadInstagramInsights();
       else if (tabId === 'health') loadTelemetry();
     }
 
@@ -3018,6 +3212,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                   <a href="/api/renders/${topRender.id}/thumbnail?time_sec=1.0" target="_blank" class="btn-secondary" style="text-decoration: none; display: flex; align-items: center; gap: 0.35rem;">
                     📷 Cover Thumbnail
                   </a>
+                  <button class="btn-secondary" style="border-color: rgba(14, 165, 233, 0.4); color: #0ea5e9;" onclick="applyWatermarkHero(${topRender.id}, '${topRender.video_path.replace(/\\\\/g, '/')}', '${topRender.account_id || 'acc_motivation'}')">
+                    🛡️ Watermark Video
+                  </button>
                 </div>
 
                 <!-- Feature 2: Viral Hook A/B Studio -->
@@ -4088,10 +4285,179 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       showToast(`Copied ${label} to clipboard!`);
     }
 
+    // --- Ingest Mode Switcher ---
+    function setIngestMode(mode) {
+      const btnSingle = document.getElementById('btnModeSingle');
+      const btnBatch = document.getElementById('btnModeBatch');
+      const boxSingle = document.getElementById('containerSingleIngest');
+      const boxBatch = document.getElementById('containerBatchIngest');
+      if (mode === 'batch') {
+        if (btnSingle) btnSingle.className = 'btn-secondary';
+        if (btnBatch) btnBatch.className = 'btn-primary';
+        if (boxSingle) boxSingle.style.display = 'none';
+        if (boxBatch) boxBatch.style.display = 'block';
+      } else {
+        if (btnSingle) btnSingle.className = 'btn-primary';
+        if (btnBatch) btnBatch.className = 'btn-secondary';
+        if (boxSingle) boxSingle.style.display = 'block';
+        if (boxBatch) boxBatch.style.display = 'none';
+      }
+    }
+
+    // --- Autonomous Batch Playlist / Channel Ingest ---
+    async function submitBatchPlaylistJob() {
+      const input = document.getElementById('batchPlaylistInput');
+      const url = input ? input.value.trim() : '';
+      if (!url) {
+        showToast('Please enter a YouTube playlist or channel URL');
+        return;
+      }
+      const maxItems = parseInt(document.getElementById('batchMaxItems').value) || 5;
+      const minDur = parseFloat(document.getElementById('batchMinDuration').value) || 60;
+      const maxDur = parseFloat(document.getElementById('batchMaxDuration').value) || 1800;
+      const accountId = (currentGlobalAccount && currentGlobalAccount !== 'all') ? currentGlobalAccount : 'acc_motivation';
+
+      const resultBox = document.getElementById('batchIngestResult');
+      resultBox.style.display = 'block';
+      resultBox.innerHTML = '<span style="color: #818cf8;">Crawling playlist metadata via flat inspection (no large downloads upfront)...</span>';
+
+      try {
+        const res = await fetch('/api/jobs/batch-playlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            playlist_url: url,
+            account_id: accountId,
+            max_items: maxItems,
+            min_duration_sec: minDur,
+            max_duration_sec: maxDur
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultBox.innerHTML = `<span style="color: #10b981; font-weight: 600;">✓ Discovered ${data.total_discovered} videos. Enqueued ${data.queued_count} new jobs (${data.skipped_count} skipped/duplicates).</span>`;
+          showToast(`Enqueued ${data.queued_count} batch jobs successfully!`);
+          input.value = '';
+          loadOverview();
+        } else {
+          resultBox.innerHTML = `<span style="color: #ef4444;">Error: ${data.detail || 'Batch ingest failed'}</span>`;
+        }
+      } catch (err) {
+        resultBox.innerHTML = `<span style="color: #ef4444;">Network error: ${err.message}</span>`;
+      }
+    }
+
+    // --- Watermark Video Hero Action ---
+    async function applyWatermarkHero(renderId, videoPath, accountId) {
+      showToast('Burning account watermark pill with hardware acceleration...');
+      try {
+        const acc = accountsCache.find(a => a.id === accountId) || {};
+        const handle = acc.instagram_username ? `@${acc.instagram_username}` : `@${accountId.replace('acc_', '')}`;
+        const res = await fetch('/api/watermark/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            video_path: videoPath,
+            handle: handle,
+            position: 'top_right',
+            opacity: 0.75
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Account watermark burned successfully!');
+          loadOverview();
+        } else {
+          showToast(`Watermark failed: ${data.detail || 'Error'}`);
+        }
+      } catch (e) {
+        showToast(`Watermark failed: ${e.message}`);
+      }
+    }
+
+    // --- Hardware Acceleration Auto-Negotiation Status ---
+    async function checkHardwareAccel() {
+      try {
+        const res = await fetch('/api/system/hardware');
+        if (res.ok) {
+          const hw = await res.json();
+          const badge = document.getElementById('hwAccelText');
+          if (badge) {
+            badge.innerText = hw.hw ? `${hw.device}` : 'CPU (libx264)';
+          }
+        }
+      } catch (e) {
+        console.warn('HW probe failed:', e);
+      }
+    }
+
+    // --- Instagram Insights Telemetry ---
+    async function loadInstagramInsights() {
+      const accountId = (currentGlobalAccount && currentGlobalAccount !== 'all') ? currentGlobalAccount : 'acc_motivation';
+      try {
+        const res = await fetch(`/api/insights/${accountId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const pCount = document.getElementById('igMetricPosts');
+        const vCount = document.getElementById('igMetricViews');
+        const iCount = document.getElementById('igMetricInteractions');
+        const rCount = document.getElementById('igMetricRetention');
+        const tbl = document.getElementById('igInsightsTableContainer');
+
+        if (pCount) pCount.innerText = data.total_tracked_posts || 0;
+        if (vCount) vCount.innerText = (data.aggregates?.total_views || 0).toLocaleString();
+        if (iCount) {
+          const totalInt = (data.aggregates?.total_likes || 0) + (data.aggregates?.total_comments || 0) + (data.aggregates?.total_shares || 0);
+          iCount.innerText = totalInt.toLocaleString();
+        }
+        if (rCount) rCount.innerText = (data.aggregates?.avg_retention_rate || 0) + '%';
+
+        if (tbl && data.history && data.history.length > 0) {
+          tbl.innerHTML = `
+            <div style="font-weight: 700; margin-bottom: 0.5rem; color: #cbd5e1;">Recent Posts Performance History:</div>
+            <div style="overflow-x: auto;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem;">
+                <thead>
+                  <tr style="border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; color: var(--text-dim);">
+                    <th style="padding: 0.4rem;">Post ID</th>
+                    <th style="padding: 0.4rem;">Views</th>
+                    <th style="padding: 0.4rem;">Likes</th>
+                    <th style="padding: 0.4rem;">Comments</th>
+                    <th style="padding: 0.4rem;">Shares</th>
+                    <th style="padding: 0.4rem;">Retention</th>
+                    <th style="padding: 0.4rem;">Recorded</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.history.slice(0, 5).map(h => `
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                      <td style="padding: 0.4rem; font-family: monospace;">#${h.publishing_id}</td>
+                      <td style="padding: 0.4rem; color: #60a5fa; font-weight: 600;">${h.views.toLocaleString()}</td>
+                      <td style="padding: 0.4rem;">${h.likes.toLocaleString()}</td>
+                      <td style="padding: 0.4rem;">${h.comments.toLocaleString()}</td>
+                      <td style="padding: 0.4rem;">${h.shares.toLocaleString()}</td>
+                      <td style="padding: 0.4rem; color: #34d399; font-weight: 600;">${h.retention_rate}%</td>
+                      <td style="padding: 0.4rem; color: var(--text-dim);">${h.recorded_at ? h.recorded_at.split('T')[0] : 'Today'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        } else if (tbl) {
+          tbl.innerHTML = '<div style="color: var(--text-dim); padding: 0.5rem 0;">No published posts tracked yet for this account. Approve and publish a draft to view telemetry feedback.</div>';
+        }
+      } catch (e) {
+        console.error('Failed to load insights:', e);
+      }
+    }
+
     // Auto-initialize on load
     window.addEventListener('DOMContentLoaded', async () => {
       await loadAccountsList();
       await checkAutomationStatus();
+      checkHardwareAccel();
       loadOverview();
 
       // Background telemetry sync every 5 seconds
