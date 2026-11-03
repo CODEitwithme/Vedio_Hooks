@@ -6,6 +6,7 @@ smart face tracking, and animated karaoke subtitle rendering.
 
 import os
 import sys
+import re
 import json
 import traceback
 from pathlib import Path
@@ -14,7 +15,13 @@ from typing import Dict, Any, Optional
 # Ensure workspace root in path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.db import update_job_progress, update_job_metadata, save_rendered_short, get_job, is_emergency_stopped, get_account
+from src.db import (
+    update_job_progress, update_job_metadata, save_rendered_short, get_job,
+    is_emergency_stopped, get_account, get_series, get_series_episode,
+    update_episode_render_result, update_series, save_video_metadata, save_thumbnail_asset
+)
+from src.metadata_generator import generate_video_metadata
+from src.thumbnail_studio import generate_thumbnail_suite
 from src.ingest import download_video, process_local_file
 from src.transcribe import transcribe_audio
 from src.virality_selector import select_viral_clips
@@ -365,6 +372,64 @@ def render_short_job(
         account_id=account_id
     )
 
+    # Step E: Autonomous AI Metadata & Thumbnail Suite Generation
+    try:
+        raw_text = target_clip.get("full_quote", "") or target_clip.get("hook_text", "") or title
+        meta_res = generate_video_metadata(
+            target_type="short",
+            target_id=render_id,
+            title=title,
+            text=raw_text,
+            niche=niche,
+            job_id=job_id,
+            duration=end_t - start_t,
+            words=active_words,
+            handle=account.get("handle", "@vediohooks") if account else "@vediohooks"
+        )
+        save_video_metadata(
+            target_type="short",
+            target_id=render_id,
+            title=title,
+            niche=niche,
+            youtube_data=meta_res.youtube.model_dump(),
+            instagram_data=meta_res.instagram.model_dump(),
+            tiktok_data=meta_res.tiktok.model_dump(),
+            title_variations=meta_res.title_variations.model_dump(),
+            quality_score=meta_res.quality.overall_score,
+            quality_breakdown=meta_res.quality.model_dump(),
+            job_id=job_id,
+            account_id=account_id
+        )
+
+        thumb_res = generate_thumbnail_suite(
+            video_path=final_video_path,
+            target_type="short",
+            target_id=render_id,
+            title=title,
+            niche=niche,
+            start_sec=0.0,
+            end_sec=max(1.0, end_t - start_t),
+            aspect_ratio="9:16",
+            style_mode="auto",
+            brand_handle=account.get("handle", "@vediohooks") if account else "@vediohooks"
+        )
+        for idx, var in enumerate(thumb_res.variations):
+            save_thumbnail_asset(
+                target_type="short",
+                target_id=render_id,
+                image_path=var.image_path,
+                headline=var.headline,
+                variation_type=var.variation_type,
+                aspect_ratio=var.aspect_ratio,
+                style_mode=var.style_mode,
+                source_timestamp=var.source_timestamp,
+                is_selected=1 if idx == 0 else 0,
+                job_id=job_id,
+                account_id=account_id
+            )
+    except Exception as auto_meta_err:
+        print(f"[!] Warning generating auto metadata/thumbnail for short #{render_id}: {auto_meta_err}")
+
     print(f"[SUCCESS] Rendered short #{render_id} for job {job_id} -> {final_video_path}")
     return {
         "render_id": render_id,
@@ -380,3 +445,377 @@ def render_short_job(
         "duration": round(end_t - start_t, 2),
         "retention_telemetry": retention_telemetry
     }
+
+
+# =====================================================================
+# --- AI CLIFFHANGER SERIES RENDERING ENGINE ---
+# =====================================================================
+
+def render_series_episode_job(
+    series_id: str,
+    episode_id: int,
+    crop_mode: str = "smart_face",
+    theme: str = "hormozi_yellow",
+    enable_ducking: bool = True,
+    enable_jumpcuts: bool = False,
+    enable_sfx: bool = True,
+    enable_auto_zoom: bool = False
+) -> Dict[str, Any]:
+    """
+    Renders an individual series episode into a 9:16 vertical short with
+    MediaPipe face tracking, dynamic Alex Hormozi karaoke subtitles, and
+    an episodic series header banner (e.g., [EP 1/4] TITLE or [FINAL EPISODE]).
+    """
+    if is_emergency_stopped():
+        raise RuntimeError("Emergency stop is active. Episode render halted.")
+
+    episode = get_series_episode(episode_id)
+    if not episode or episode.get("series_id") != series_id:
+        raise ValueError(f"Episode #{episode_id} not found in series {series_id}")
+
+    series = get_series(series_id)
+    if not series:
+        raise ValueError(f"Series not found: {series_id}")
+
+    update_episode_render_result(episode_id, render_status="rendering")
+
+    try:
+        start_t = float(episode["start_time"])
+        end_t = float(episode["end_time"])
+        title = episode.get("title", f"Episode {episode.get('episode_number', 1)}")
+        score = int(episode.get("quality_score", 85))
+        is_final = bool(episode.get("is_final_episode", False))
+        ep_num = episode.get("episode_number", 1)
+        total_eps = series.get("episode_count", len(series.get("episodes", [])))
+
+        # Locate source video
+        job_id = series.get("job_id")
+        video_path = series.get("source_video_path")
+        transcript_path = None
+
+        if job_id:
+            job = get_job(job_id)
+            if job:
+                transcript_path = job.get("transcript_json_path")
+                if not video_path or not os.path.exists(video_path):
+                    video_path = job.get("source_path")
+
+        if not video_path or not os.path.exists(video_path):
+            candidates = list(Path("temp").glob("*.mp4"))
+            if candidates:
+                video_path = str(candidates[0])
+            else:
+                raise FileNotFoundError(f"Source video file not found for series {series_id}")
+
+        if not transcript_path or not os.path.exists(transcript_path):
+            if job_id and os.path.exists(f"temp/{job_id}_transcript.json"):
+                transcript_path = f"temp/{job_id}_transcript.json"
+            else:
+                trans_candidates = list(Path("temp").glob("*_transcript.json"))
+                if trans_candidates:
+                    transcript_path = str(trans_candidates[0])
+                else:
+                    raise FileNotFoundError(f"Transcript JSON missing for series {series_id}")
+
+        out_base = f"output/{series_id}_ep{ep_num}_{crop_mode}_{theme}"
+        final_video_path = f"{out_base}_9x16.mp4"
+        words_json_path = f"{out_base}_words.json"
+        ass_path = f"temp/{series_id}_ep{ep_num}_{theme}.ass"
+
+        # Step A: Re-zero word timestamps for this episode cut
+        sliced_sub = slice_word_timestamps(
+            full_transcript_path=transcript_path,
+            start_sec=start_t,
+            end_sec=end_t,
+            output_sliced_json=words_json_path
+        )
+        active_words = sliced_sub["words"]
+
+        # Step B: Series Top Hook Banner Styling
+        # e.g., "[FINAL EPISODE] HOW HE WON" or "[EP 1/4] THE FIRST FAILURE"
+        clean_ep_title = re.sub(r"^(part\s*\d+|episode\s*\d+)[:\s\-]*", "", title, flags=re.IGNORECASE).strip().upper()
+        if not clean_ep_title:
+            clean_ep_title = series.get("title", "SERIES HIGHLIGHT").upper()
+
+        if is_final:
+            series_banner_text = f"[FINAL EPISODE] {clean_ep_title}"
+        else:
+            series_banner_text = f"[EP {ep_num}/{total_eps}] {clean_ep_title}"
+
+        # Truncate if banner is too wide
+        if len(series_banner_text) > 42:
+            series_banner_text = series_banner_text[:39] + "..."
+
+        create_ass_subtitles(
+            words_data=active_words,
+            output_ass_path=ass_path,
+            theme_name=theme,
+            font_name="Arial Black",
+            font_size=68,
+            words_per_chunk=3,
+            margin_v=720,
+            hook_banner_text=series_banner_text,
+            hook_banner_theme=theme,
+            hook_banner_duration=3.8
+        )
+
+        # Step C: Render 9:16 vertical video using existing infrastructure
+        if crop_mode == "smart_face":
+            render_face_tracked_short(
+                video_path=video_path,
+                start_sec=start_t,
+                end_sec=end_t,
+                output_path=final_video_path,
+                speaker_mode="auto",
+                captions_ass_path=ass_path
+            )
+        elif crop_mode == "blur_fill":
+            raw_cut = f"temp/{series_id}_raw_{ep_num}.mp4"
+            slice_and_crop_video(
+                video_path=video_path,
+                start_sec=start_t,
+                end_sec=end_t,
+                output_path=raw_cut,
+                crop_mode="blur_fill"
+            )
+            burn_subtitles_to_video(
+                input_video_path=raw_cut,
+                ass_subtitle_path=ass_path,
+                output_video_path=final_video_path
+            )
+            if os.path.exists(raw_cut):
+                os.remove(raw_cut)
+        elif crop_mode == "split_stack":
+            raw_cut = f"temp/{series_id}_raw_{ep_num}.mp4"
+            slice_and_crop_video(
+                video_path=video_path,
+                start_sec=start_t,
+                end_sec=end_t,
+                output_path=raw_cut,
+                crop_mode="split_stack"
+            )
+            burn_subtitles_to_video(
+                input_video_path=raw_cut,
+                ass_subtitle_path=ass_path,
+                output_video_path=final_video_path
+            )
+            if os.path.exists(raw_cut):
+                os.remove(raw_cut)
+        else:  # 'center'
+            raw_cut = f"temp/{series_id}_raw_{ep_num}.mp4"
+            slice_and_crop_video(
+                video_path=video_path,
+                start_sec=start_t,
+                end_sec=end_t,
+                output_path=raw_cut,
+                crop_mode="center"
+            )
+            burn_subtitles_to_video(
+                input_video_path=raw_cut,
+                ass_subtitle_path=ass_path,
+                output_video_path=final_video_path
+            )
+            if os.path.exists(raw_cut):
+                os.remove(raw_cut)
+
+        # Optional audio ducking
+        account_id = series.get("account_id", "acc_motivation")
+        account = get_account(account_id) or {}
+        niche = account.get("niche", "Motivation")
+
+        if enable_ducking:
+            ducked_out = f"{out_base}_ducked.mp4"
+            apply_audio_ducking(speech_video_path=final_video_path, output_video_path=ducked_out, niche=niche)
+            final_video_path = ducked_out
+
+        # Optional transition SFX
+        if enable_sfx:
+            sfx_out = f"{out_base}_sfx.mp4"
+            apply_transition_sfx(final_video_path, sfx_out, sfx_times=[0.1], sfx_type="whoosh")
+            if os.path.exists(sfx_out):
+                final_video_path = sfx_out
+
+        # Optional dynamic auto-zoom
+        if enable_auto_zoom:
+            zoom_out = f"{out_base}_autozoom.mp4"
+            apply_dynamic_auto_zoom(
+                input_video_path=final_video_path,
+                output_video_path=zoom_out,
+                words=active_words,
+                zoom_scale=1.15
+            )
+            if os.path.exists(zoom_out) and os.path.getsize(zoom_out) > 0:
+                final_video_path = zoom_out
+
+        # Step D: Save into rendered_shorts and publishing_queue
+        caption = (
+            f"🎬 {series.get('title')} — Episode {ep_num}/{total_eps}\n\n"
+            f"🔥 {episode.get('opening_hook')}\n\n"
+            f"❓ {episode.get('cliffhanger_text')}\n\n"
+            f"👉 Follow to watch Part {ep_num + 1} next!\n—\n"
+        ) if not is_final else (
+            f"🎬 {series.get('title')} — FINAL EPISODE\n\n"
+            f"🏆 {title}\n\n"
+            f"💡 {episode.get('payoff_text')}\n\n"
+            f"👇 Save the full series & share with someone who needs this story!\n—\n"
+        )
+        hashtags = f"#series #part{ep_num} #shorts #reels #viral #cliffhanger"
+
+        render_id = save_rendered_short(
+            job_id=job_id or series_id,
+            clip_id=ep_num,
+            title=f"{series.get('title')} [Part {ep_num}/{total_eps}]",
+            start_time=start_t,
+            end_time=end_t,
+            virality_score=score,
+            crop_mode=crop_mode,
+            theme=theme,
+            video_path=final_video_path,
+            caption=caption,
+            hashtags=hashtags,
+            account_id=account_id
+        )
+
+        update_episode_render_result(
+            episode_id=episode_id,
+            render_status="ready",
+            rendered_video_path=final_video_path,
+            render_id=render_id
+        )
+
+        # Step E: Autonomous Series-Aware Metadata & Thumbnail Generation
+        try:
+            series_info = {
+                "series_id": series_id,
+                "series_title": series.get("title", "Series"),
+                "episode_number": ep_num,
+                "total_episodes": total_eps,
+                "is_final_episode": is_final,
+                "next_teaser": episode.get("next_teaser", "")
+            }
+            ep_text = episode.get("main_content", "") or episode.get("opening_hook", "") or title
+            meta_res = generate_video_metadata(
+                target_type="episode",
+                target_id=episode_id,
+                title=f"{series.get('title')} - Part {ep_num}",
+                text=ep_text,
+                niche=niche,
+                job_id=job_id or series_id,
+                series_info=series_info,
+                duration=end_t - start_t,
+                words=active_words,
+                handle=account.get("handle", "@vediohooks") if account else "@vediohooks"
+            )
+            save_video_metadata(
+                target_type="episode",
+                target_id=episode_id,
+                title=f"{series.get('title')} - Part {ep_num}",
+                niche=niche,
+                youtube_data=meta_res.youtube.model_dump(),
+                instagram_data=meta_res.instagram.model_dump(),
+                tiktok_data=meta_res.tiktok.model_dump(),
+                title_variations=meta_res.title_variations.model_dump(),
+                quality_score=meta_res.quality.overall_score,
+                quality_breakdown=meta_res.quality.model_dump(),
+                job_id=job_id or series_id,
+                account_id=account_id
+            )
+
+            thumb_res = generate_thumbnail_suite(
+                video_path=final_video_path,
+                target_type="episode",
+                target_id=episode_id,
+                title=f"[PART {ep_num}] {clean_ep_title}",
+                niche=niche,
+                start_sec=0.0,
+                end_sec=max(1.0, end_t - start_t),
+                aspect_ratio="9:16",
+                style_mode="auto",
+                brand_handle=account.get("handle", "@vediohooks") if account else "@vediohooks"
+            )
+            for idx, var in enumerate(thumb_res.variations):
+                save_thumbnail_asset(
+                    target_type="episode",
+                    target_id=episode_id,
+                    image_path=var.image_path,
+                    headline=var.headline,
+                    variation_type=var.variation_type,
+                    aspect_ratio=var.aspect_ratio,
+                    style_mode=var.style_mode,
+                    source_timestamp=var.source_timestamp,
+                    is_selected=1 if idx == 0 else 0,
+                    job_id=job_id or series_id,
+                    account_id=account_id
+                )
+        except Exception as auto_meta_err:
+            print(f"[!] Warning generating auto metadata/thumbnail for episode #{episode_id}: {auto_meta_err}")
+
+        print(f"[SUCCESS] Series Episode #{episode_id} (Part {ep_num}) rendered -> {final_video_path}")
+        return {
+            "episode_id": episode_id,
+            "series_id": series_id,
+            "episode_number": ep_num,
+            "render_id": render_id,
+            "video_path": final_video_path,
+            "duration": round(end_t - start_t, 2),
+            "render_status": "ready"
+        }
+
+    except Exception as ex:
+        print(f"[ERROR] Episode #{episode_id} render failed: {ex}")
+        update_episode_render_result(episode_id, render_status="failed")
+        raise
+
+
+def batch_render_series_job(
+    series_id: str,
+    crop_mode: str = "smart_face",
+    theme: str = "hormozi_yellow"
+) -> Dict[str, Any]:
+    """
+    Renders all un-rendered episodes in a series sequentially,
+    with error recovery and state preservation.
+    """
+    series = get_series(series_id)
+    if not series:
+        raise ValueError(f"Series not found: {series_id}")
+
+    update_series(series_id, {"status": "rendering"})
+    episodes = series.get("episodes", [])
+    results = []
+    failed = 0
+
+    for ep in episodes:
+        if ep.get("render_status") == "ready" and ep.get("rendered_video_path") and os.path.exists(ep["rendered_video_path"]):
+            results.append({"episode_id": ep["id"], "render_status": "already_rendered"})
+            continue
+
+        try:
+            res = render_series_episode_job(
+                series_id=series_id,
+                episode_id=ep["id"],
+                crop_mode=crop_mode,
+                theme=theme
+            )
+            results.append(res)
+        except Exception as e:
+            print(f"[!] Error batch rendering episode {ep['id']}: {e}")
+            failed += 1
+            results.append({"episode_id": ep["id"], "render_status": "failed", "error": str(e)})
+
+    # Final series status
+    series_final = get_series(series_id)
+    all_ready = all(e.get("render_status") == "ready" for e in series_final.get("episodes", [])) if series_final else False
+    if all_ready:
+        update_series(series_id, {"status": "completed"})
+    elif failed > 0:
+        update_series(series_id, {"status": "ready"})
+
+    return {
+        "series_id": series_id,
+        "total_episodes": len(episodes),
+        "rendered_count": len([r for r in results if r.get("render_status") in ("ready", "already_rendered")]),
+        "failed_count": failed,
+        "results": results
+    }
+

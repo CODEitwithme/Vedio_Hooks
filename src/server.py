@@ -63,10 +63,45 @@ from src.db import (
     save_hook_variant,
     list_hook_variants,
     update_hook_variant_render,
-    add_publishing_draft
+    add_publishing_draft,
+    create_series,
+    get_series,
+    list_series,
+    update_series,
+    delete_series,
+    create_series_episode,
+    get_series_episode,
+    list_series_episodes,
+    update_series_episode,
+    delete_series_episode,
+    reorder_series_episodes,
+    merge_series_episodes,
+    split_series_episode,
+    update_episode_render_result,
+    save_video_metadata,
+    get_video_metadata,
+    list_video_metadata,
+    update_video_metadata_field,
+    delete_video_metadata,
+    save_thumbnail_asset,
+    get_thumbnail_asset,
+    list_thumbnail_assets,
+    select_thumbnail_asset,
+    delete_thumbnail_asset
 )
+from src.metadata_generator import (
+    generate_video_metadata, build_title_variations, generate_youtube_metadata,
+    generate_instagram_metadata, generate_tiktok_metadata, evaluate_metadata_quality, PLATFORM_LIMITS
+)
+from src.thumbnail_studio import (
+    generate_thumbnail_suite, extract_candidate_frames, composite_thumbnail,
+    generate_grid_crop_preview, generate_thumbnail_headline
+)
+from src.publishing_validator import validate_publishing_readiness, export_publishing_bundle
 from src.scheduler import scheduler
-from src.pipeline_worker import render_short_job
+from src.pipeline_worker import render_short_job, render_series_episode_job, batch_render_series_job
+from src.series_engine import CliffhangerSeriesEngine, StoryArc, EpisodePlan, CLIFFHANGER_TYPES
+from src.virality_selector import extract_all_words
 from src.subtitle_generator import THEMES
 from src.publishing import is_publishing_enabled, get_instagram_config, InstagramGraphAPIClient
 from src.ai_director import generate_content_plan, build_director_heuristic_plan, NICHE_DIRECTOR_PROFILES
@@ -325,6 +360,124 @@ class GeneratePlanRequest(BaseModel):
 
 class EmergencyStopRequest(BaseModel):
     stopped: Optional[bool] = None
+
+
+# --- AI Cliffhanger Series Engine Models ---
+
+class SeriesAnalyzeArcsRequest(BaseModel):
+    job_id: Optional[str] = None
+    transcript_path: Optional[str] = None
+
+
+class SeriesGenerateRequest(BaseModel):
+    job_id: Optional[str] = None
+    transcript_path: Optional[str] = None
+    account_id: Optional[str] = "acc_motivation"
+    story_arc_id: Optional[str] = None
+    story_arc: Optional[Dict[str, Any]] = None
+    episode_count: Optional[int] = None
+    custom_start_sec: Optional[float] = None
+    custom_end_sec: Optional[float] = None
+    generation_mode: Optional[str] = "auto"  # auto, guided, custom
+
+
+class EpisodeUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    opening_hook: Optional[str] = None
+    cliffhanger_text: Optional[str] = None
+    next_teaser: Optional[str] = None
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+
+
+class EpisodeMergeRequest(BaseModel):
+    ep1_id: int
+    ep2_id: int
+
+
+class EpisodeSplitRequest(BaseModel):
+    split_time: float
+    ep1_cliffhanger: Optional[str] = None
+    ep2_hook: Optional[str] = None
+
+
+class EpisodeReorderRequest(BaseModel):
+    episode_ids: List[int]
+
+
+class SeriesRenderEpisodeRequest(BaseModel):
+    crop_mode: Optional[str] = "smart_face"
+    theme: Optional[str] = "hormozi_yellow"
+    enable_ducking: Optional[bool] = True
+    enable_jumpcuts: Optional[bool] = False
+    enable_sfx: Optional[bool] = True
+    enable_auto_zoom: Optional[bool] = False
+
+
+class SeriesBatchRenderRequest(BaseModel):
+    crop_mode: Optional[str] = "smart_face"
+    theme: Optional[str] = "hormozi_yellow"
+
+
+# --- AI Metadata & SEO Generator Request Models ---
+
+class MetadataGenerateRequest(BaseModel):
+    target_type: str = "short"  # short, episode, long_form
+    target_id: Any
+    niche: Optional[str] = "Motivation"
+    custom_title: Optional[str] = None
+
+
+class MetadataSaveRequest(BaseModel):
+    target_type: str = "short"
+    target_id: Any
+    title: str
+    niche: str = "Motivation"
+    youtube: Dict[str, Any]
+    instagram: Dict[str, Any]
+    tiktok: Dict[str, Any]
+    title_variations: Optional[Dict[str, Any]] = None
+    quality_score: Optional[int] = 85
+    account_id: Optional[str] = "acc_motivation"
+
+
+class MetadataRegenerateFieldRequest(BaseModel):
+    target_type: str = "short"
+    target_id: Any
+    platform: str = "youtube"  # youtube, instagram, tiktok
+    field_name: str = "title"  # title, description, caption, hashtags, tags
+    variation_type: Optional[str] = None
+
+
+class MetadataBatchRequest(BaseModel):
+    items: List[Dict[str, Any]]  # [{target_type, target_id, niche, title}]
+
+
+# --- AI Thumbnail & Cover Studio Request Models ---
+
+class ThumbnailGenerateRequest(BaseModel):
+    target_type: Optional[str] = "short"  # short, episode, long_form
+    target_id: Optional[Any] = None
+    video_path: Optional[str] = None
+    title: Optional[str] = None
+    time_sec: Optional[float] = 1.0
+    aspect_ratio: Optional[str] = "9:16"  # 16:9, 9:16, 1:1
+    style_mode: Optional[str] = "auto"    # auto, face_focused, cinematic, custom
+    custom_headline: Optional[str] = None
+    custom_placement: Optional[str] = "safe_auto"  # safe_auto, top, center, bottom
+    niche: Optional[str] = "Motivation"
+    brand_handle: Optional[str] = "@vediohooks"
+
+
+class ThumbnailSelectRequest(BaseModel):
+    asset_id: int
+    target_type: str = "short"
+    target_id: Any
+
+
+class ThumbnailExtractFramesRequest(BaseModel):
+    target_type: str = "short"
+    target_id: Any
 
 
 # --- HTTP 206 Range Video Streaming with Security Hardening ---
@@ -824,9 +977,11 @@ def render_clip_endpoint(job_id: str, clip_id: int, req: RenderClipRequest):
 
 
 @app.get("/api/renders")
+@app.get("/api/rendered-shorts")
 def get_renders_endpoint(account_id: Optional[str] = Query(None), status: Optional[str] = None, limit: int = 50):
     """Lists rendered 9:16 vertical shorts."""
-    return {"renders": list_rendered_shorts(account_id=account_id, status=status, limit=limit)}
+    items = list_rendered_shorts(account_id=account_id, status=status, limit=limit)
+    return {"renders": items, "shorts": items, "total": len(items)}
 
 
 @app.post("/api/renders/{render_id}/send-to-draft")
@@ -1089,11 +1244,11 @@ def get_analytics_endpoint(account_id: Optional[str] = None):
     return get_performance_analytics(account_id=account_id)
 
 
-# --- 9:16 High-CTR Cover Thumbnail Studio ---
+# --- 9:16 High-CTR Cover Thumbnail Studio (Legacy) ---
 
-@app.post("/api/thumbnails/generate")
-def generate_thumbnails_endpoint(req: CoverThumbnailsRequest):
-    """Generates 3 distinct high-converting cover thumbnail styles."""
+@app.post("/api/thumbnails/legacy-covers")
+def generate_legacy_thumbnails_endpoint(req: CoverThumbnailsRequest):
+    """Generates 3 distinct high-converting cover thumbnail styles (legacy endpoint)."""
     try:
         covers = generate_cover_thumbnails(
             video_path=req.video_path,
@@ -1302,6 +1457,928 @@ def hook_banner_endpoint(req: HookBannerRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================================
+# --- AI CLIFFHANGER SERIES ENGINE REST ENDPOINTS ---
+# =====================================================================
+
+series_engine_instance = CliffhangerSeriesEngine()
+
+
+def _resolve_transcript_data(job_id: Optional[str] = None, transcript_path: Optional[str] = None) -> Dict[str, Any]:
+    """Helper to locate and parse transcript JSON for series generation."""
+    target_path = None
+    if transcript_path and os.path.exists(transcript_path):
+        target_path = transcript_path
+    elif job_id:
+        job = get_job(job_id)
+        if job and job.get("transcript_json_path") and os.path.exists(job["transcript_json_path"]):
+            target_path = job["transcript_json_path"]
+        elif os.path.exists(f"temp/{job_id}_transcript.json"):
+            target_path = f"temp/{job_id}_transcript.json"
+
+    if not target_path or not os.path.exists(target_path):
+        # Fallback to any recent transcript in temp
+        candidates = sorted(Path("temp").glob("*_transcript.json"), key=os.path.getmtime, reverse=True)
+        if candidates:
+            target_path = str(candidates[0])
+        else:
+            raise HTTPException(status_code=404, detail="No transcript JSON found. Please transcribe the video first.")
+
+    try:
+        with open(target_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read transcript: {e}")
+
+
+@app.post("/api/series/analyze-arcs")
+def series_analyze_arcs_endpoint(req: SeriesAnalyzeArcsRequest):
+    """
+    Analyzes full speech transcript to discover candidate story arcs,
+    dynamic episode sizing, narrative progression, and turning points.
+    """
+    t_data = _resolve_transcript_data(req.job_id, req.transcript_path)
+    arcs = series_engine_instance.discover_story_arcs(t_data)
+    return {
+        "job_id": req.job_id,
+        "total_source_duration": t_data.get("duration", 0.0),
+        "arcs_found": len(arcs),
+        "story_arcs": [arc.model_dump() for arc in arcs]
+    }
+
+
+@app.post("/api/series/generate")
+def series_generate_endpoint(req: SeriesGenerateRequest):
+    """
+    Generates a full, sequence-coherent episodic cliffhanger series.
+    Supports AUTO, GUIDED, and CUSTOM generation modes.
+    """
+    if is_emergency_stopped():
+        raise HTTPException(status_code=423, detail="Emergency stop is active. Series generation blocked.")
+
+    t_data = _resolve_transcript_data(req.job_id, req.transcript_path)
+
+    # Reconstruct selected story arc if provided
+    selected_arc = None
+    if req.story_arc:
+        try:
+            selected_arc = StoryArc(**req.story_arc)
+        except Exception:
+            pass
+
+    time_range = None
+    if req.custom_start_sec is not None and req.custom_end_sec is not None:
+        time_range = (req.custom_start_sec, req.custom_end_sec)
+
+    try:
+        series_plan = series_engine_instance.generate_series(
+            transcript_data=t_data,
+            selected_arc=selected_arc,
+            account_id=req.account_id or "acc_motivation",
+            job_id=req.job_id,
+            desired_episodes=req.episode_count,
+            custom_time_range=time_range,
+            generation_mode=req.generation_mode or "auto"
+        )
+
+        # Persist generated series in SQLite
+        plan_dict = series_plan.model_dump()
+        series_id = create_series(plan_dict)
+        full_series = get_series(series_id)
+        return full_series
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Series generation failed: {e}")
+
+
+@app.get("/api/series")
+def list_series_endpoint(
+    account_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """Lists all generated multi-part series with account branding and render statistics."""
+    series_list = list_series(account_id=account_id, job_id=job_id, status=status, limit=limit)
+    for s in series_list:
+        s["episodes"] = list_series_episodes(s["id"])
+    return {
+        "series": series_list,
+        "total": len(series_list)
+    }
+
+
+@app.get("/api/series/{series_id}")
+def get_series_endpoint(series_id: str):
+    """Retrieves complete series details, narrative timeline, and ordered episodes."""
+    s = get_series(series_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return s
+
+
+@app.post("/api/series/{series_id}/update")
+def update_series_endpoint(series_id: str, req: Request):
+    """Updates high-level series attributes."""
+    s = get_series(series_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Series not found")
+    data = req.scope.get("json_data") or {}
+    success = update_series(series_id, data)
+    return {"success": success, "series": get_series(series_id)}
+
+
+@app.delete("/api/series/{series_id}")
+def delete_series_endpoint(series_id: str):
+    """Deletes series and cascades removal to all episodes."""
+    success = delete_series(series_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return {"success": True, "series_id": series_id}
+
+
+@app.get("/api/series/{series_id}/episodes/{episode_id}")
+def get_series_episode_endpoint(series_id: str, episode_id: int):
+    """Retrieves full details for a single episode."""
+    ep = get_series_episode(episode_id)
+    if not ep or ep.get("series_id") != series_id:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return ep
+
+
+@app.post("/api/series/{series_id}/episodes/{episode_id}/update")
+def update_series_episode_endpoint(series_id: str, episode_id: int, req: EpisodeUpdateRequest):
+    """Allows manual editing of episode titles, hooks, cliffhangers, and timestamps."""
+    ep = get_series_episode(episode_id)
+    if not ep or ep.get("series_id") != series_id:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    update_dict = {}
+    if req.title is not None:
+        update_dict["title"] = req.title
+    if req.opening_hook is not None:
+        update_dict["opening_hook"] = req.opening_hook
+    if req.cliffhanger_text is not None:
+        update_dict["cliffhanger_text"] = req.cliffhanger_text
+    if req.next_teaser is not None:
+        update_dict["next_teaser"] = req.next_teaser
+    if req.start_time is not None:
+        update_dict["start_time"] = req.start_time
+    if req.end_time is not None:
+        update_dict["end_time"] = req.end_time
+
+    success = update_series_episode(episode_id, update_dict)
+    return {"success": success, "episode": get_series_episode(episode_id)}
+
+
+@app.post("/api/series/{series_id}/episodes/{episode_id}/regenerate-hook")
+def regenerate_episode_hook_endpoint(series_id: str, episode_id: int):
+    """Regenerates a high-retention opening hook for an individual episode."""
+    ep = get_series_episode(episode_id)
+    if not ep or ep.get("series_id") != series_id:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    series = get_series(series_id)
+    t_data = _resolve_transcript_data(series.get("job_id") if series else None)
+
+    all_words = extract_all_words(t_data)
+    start_t = float(ep.get("start_time", 0.0))
+    end_t = float(ep.get("end_time", start_t + 30.0))
+    ep_words = [w for w in all_words if w.get("end", 0) >= start_t and w.get("start", 0) <= end_t]
+    text_sample = " ".join([w.get("word", "") for w in ep_words[:12]])
+
+    new_hook = f"Part {ep.get('episode_number', 1)}: \"{text_sample}\" — Watch this carefully."
+    update_series_episode(episode_id, {"opening_hook": new_hook})
+    return {"success": True, "episode_id": episode_id, "opening_hook": new_hook}
+
+
+@app.post("/api/series/{series_id}/episodes/{episode_id}/regenerate-cliffhanger")
+def regenerate_episode_cliffhanger_endpoint(series_id: str, episode_id: int):
+    """Re-evaluates the episode ending using the 7-paradigm Cliffhanger Intelligence Engine."""
+    ep = get_series_episode(episode_id)
+    if not ep or ep.get("series_id") != series_id:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    series = get_series(series_id)
+    t_data = _resolve_transcript_data(series.get("job_id") if series else None)
+
+    all_words = extract_all_words(t_data)
+    start_t = float(ep.get("start_time", 0.0))
+    end_t = float(ep.get("end_time", start_t + 30.0))
+    is_final = bool(ep.get("is_final_episode", False))
+
+    ep_words = [w for w in all_words if w.get("end", 0) >= start_t and w.get("start", 0) <= end_t]
+    ep_text = " ".join([w.get("word", "") for w in ep_words])
+
+    eval_result = series_engine_instance.cliffhanger_engine.analyze_ending_window(
+        window_words=ep_words,
+        full_text=ep_text,
+        is_series_final=is_final
+    )
+
+    update_series_episode(episode_id, {
+        "cliffhanger_text": eval_result.cliffhanger_text,
+        "cliffhanger_type": eval_result.cliffhanger_type,
+        "cliffhanger_score": eval_result.cliffhanger_score,
+        "next_teaser": eval_result.next_teaser
+    })
+
+    return {
+        "success": True,
+        "episode_id": episode_id,
+        "cliffhanger_text": eval_result.cliffhanger_text,
+        "cliffhanger_type": eval_result.cliffhanger_type,
+        "cliffhanger_score": eval_result.cliffhanger_score,
+        "next_teaser": eval_result.next_teaser
+    }
+
+
+@app.post("/api/series/{series_id}/episodes/{episode_id}/regenerate")
+def regenerate_episode_endpoint(series_id: str, episode_id: int):
+    """Completely recalculates hook, cliffhanger, teasers, and quality scores for an episode."""
+    ep = get_series_episode(episode_id)
+    if not ep or ep.get("series_id") != series_id:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    series = get_series(series_id)
+    t_data = _resolve_transcript_data(series.get("job_id") if series else None)
+
+    updated_ep = series_engine_instance.regenerate_single_episode(
+        series_plan_dict=series,
+        episode_number=ep["episode_number"],
+        transcript_data=t_data
+    )
+
+    update_series_episode(episode_id, {
+        "opening_hook": updated_ep.get("opening_hook"),
+        "cliffhanger_text": updated_ep.get("cliffhanger_text"),
+        "cliffhanger_type": updated_ep.get("cliffhanger_type"),
+        "cliffhanger_score": updated_ep.get("cliffhanger_score"),
+        "next_teaser": updated_ep.get("next_teaser"),
+        "quality_score": updated_ep.get("quality_score"),
+        "quality_breakdown": updated_ep.get("quality_breakdown")
+    })
+
+    return {"success": True, "episode": get_series_episode(episode_id)}
+
+
+@app.post("/api/series/{series_id}/episodes/merge")
+def merge_episodes_endpoint(series_id: str, req: EpisodeMergeRequest):
+    """Merges two consecutive episodes into a single longer narrative part."""
+    merged_id = merge_series_episodes(series_id, req.ep1_id, req.ep2_id)
+    if not merged_id:
+        raise HTTPException(status_code=400, detail="Failed to merge episodes. Verify both belong to this series.")
+    return {"success": True, "merged_episode_id": merged_id, "series": get_series(series_id)}
+
+
+@app.post("/api/series/{series_id}/episodes/{episode_id}/split")
+def split_episode_endpoint(series_id: str, episode_id: int, req: EpisodeSplitRequest):
+    """Splits an episode into two parts at a specified timestamp."""
+    result = split_series_episode(
+        series_id=series_id,
+        episode_id=episode_id,
+        split_time=req.split_time,
+        ep1_cliffhanger=req.ep1_cliffhanger or "",
+        ep2_hook=req.ep2_hook or ""
+    )
+    if not result:
+        raise HTTPException(status_code=400, detail="Failed to split episode. Timestamp must be strictly inside the episode duration.")
+    return {"success": True, "ep1_id": result[0], "ep2_id": result[1], "series": get_series(series_id)}
+
+
+@app.post("/api/series/{series_id}/episodes/reorder")
+def reorder_episodes_endpoint(series_id: str, req: EpisodeReorderRequest):
+    """Reorders episodes according to custom sequence."""
+    success = reorder_series_episodes(series_id, req.episode_ids)
+    return {"success": success, "series": get_series(series_id)}
+
+
+@app.delete("/api/series/{series_id}/episodes/{episode_id}")
+def delete_episode_endpoint(series_id: str, episode_id: int):
+    """Deletes an episode and renumbers remaining episodes."""
+    success = delete_series_episode(episode_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return {"success": True, "series": get_series(series_id)}
+
+
+@app.post("/api/series/{series_id}/render-episode/{episode_id}")
+def render_series_episode_endpoint(
+    series_id: str,
+    episode_id: int,
+    req: SeriesRenderEpisodeRequest,
+    bg_tasks: BackgroundTasks
+):
+    """
+    Renders an individual series episode into a 9:16 vertical short
+    with MediaPipe face tracking, dynamic karaoke subtitles, and episodic [EP X/N] banners.
+    """
+    if is_emergency_stopped():
+        raise HTTPException(status_code=423, detail="Emergency stop is active. Rendering blocked.")
+
+    ep = get_series_episode(episode_id)
+    if not ep or ep.get("series_id") != series_id:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    def run_render():
+        try:
+            render_series_episode_job(
+                series_id=series_id,
+                episode_id=episode_id,
+                crop_mode=req.crop_mode or "smart_face",
+                theme=req.theme or "hormozi_yellow",
+                enable_ducking=req.enable_ducking,
+                enable_jumpcuts=req.enable_jumpcuts,
+                enable_sfx=req.enable_sfx,
+                enable_auto_zoom=req.enable_auto_zoom
+            )
+        except Exception as e:
+            print(f"[!] Background episode render error: {e}")
+
+    update_episode_render_result(episode_id, render_status="rendering")
+    bg_tasks.add_task(run_render)
+
+    return {
+        "status": "rendering",
+        "series_id": series_id,
+        "episode_id": episode_id,
+        "message": f"Rendering Episode #{ep.get('episode_number', 1)} in background."
+    }
+
+
+@app.post("/api/series/{series_id}/batch-render")
+def batch_render_series_endpoint(
+    series_id: str,
+    req: SeriesBatchRenderRequest,
+    bg_tasks: BackgroundTasks
+):
+    """
+    Batch renders all episodes in the series sequentially in the background.
+    """
+    if is_emergency_stopped():
+        raise HTTPException(status_code=423, detail="Emergency stop is active. Rendering blocked.")
+
+    s = get_series(series_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Series not found")
+
+    def run_batch():
+        try:
+            batch_render_series_job(
+                series_id=series_id,
+                crop_mode=req.crop_mode or "smart_face",
+                theme=req.theme or "hormozi_yellow"
+            )
+        except Exception as e:
+            print(f"[!] Background batch render error: {e}")
+
+    update_series(series_id, {"status": "rendering"})
+    bg_tasks.add_task(run_batch)
+
+    return {
+        "status": "rendering",
+        "series_id": series_id,
+        "message": f"Batch rendering all {s.get('episode_count', 0)} episodes in background."
+    }
+
+
+@app.get("/api/series/{series_id}/export")
+def export_series_endpoint(series_id: str):
+    """
+    Exports series metadata, episode timeline, cliffhangers, and media paths as a structured package.
+    """
+    s = get_series(series_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Series not found")
+
+    export_payload = {
+        "export_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "series_id": s["id"],
+        "series_title": s["title"],
+        "description": s["description"],
+        "main_topic": s["main_topic"],
+        "episode_count": s["episode_count"],
+        "quality_score": s["quality_score"],
+        "generation_mode": s.get("generation_mode", "auto"),
+        "story_arc": s.get("story_arc"),
+        "series_memory": s.get("series_memory"),
+        "episodes": []
+    }
+
+    for ep in s.get("episodes", []):
+        export_payload["episodes"].append({
+            "episode_number": ep["episode_number"],
+            "title": ep["title"],
+            "opening_hook": ep.get("opening_hook"),
+            "context_premise": ep.get("context_premise"),
+            "payoff": ep.get("payoff_text"),
+            "cliffhanger_text": ep.get("cliffhanger_text"),
+            "cliffhanger_type": ep.get("cliffhanger_type"),
+            "cliffhanger_score": ep.get("cliffhanger_score"),
+            "next_teaser": ep.get("next_teaser"),
+            "start_time": ep["start_time"],
+            "end_time": ep["end_time"],
+            "duration": ep["duration"],
+            "is_final_episode": bool(ep.get("is_final_episode", False)),
+            "quality_score": ep.get("quality_score"),
+            "render_status": ep.get("render_status"),
+            "video_path": ep.get("rendered_video_path")
+        })
+
+    return export_payload
+
+
+# =====================================================================
+# --- AI METADATA & SEO GENERATOR ENDPOINTS ---
+# =====================================================================
+
+def _resolve_target_context(target_type: str, target_id: Any) -> Dict[str, Any]:
+    """Resolves video path, title, text, duration, and account context for any target."""
+    target_id_str = str(target_id)
+    video_path = ""
+    title = f"{target_type.capitalize()} #{target_id}"
+    text = ""
+    duration = 45.0
+    account_id = "acc_motivation"
+    job_id = None
+    series_info = None
+    words = None
+
+    if target_type == "short":
+        renders = list_rendered_shorts(limit=300)
+        target_render = next((r for r in renders if str(r.get("id")) == target_id_str), None)
+        if target_render:
+            video_path = target_render.get("video_path", "")
+            title = target_render.get("title") or title
+            job_id = target_render.get("job_id")
+            duration = float(target_render.get("duration") or 45.0)
+            account_id = target_render.get("account_id") or "acc_motivation"
+            text = target_render.get("caption") or title
+
+            if job_id:
+                job = get_job(job_id)
+                if job:
+                    account_id = job.get("account_id") or account_id
+                    clips = job.get("clips", [])
+                    cid = target_render.get("clip_id")
+                    t_clip = next((c for c in clips if c.get("clip_id") == cid or c.get("id") == cid), None)
+                    if t_clip:
+                        text = t_clip.get("full_quote") or t_clip.get("hook_text") or text
+
+    elif target_type == "episode":
+        try:
+            ep_id = int(target_id)
+            ep = get_series_episode(ep_id)
+            if ep:
+                series_id = ep.get("series_id")
+                series = get_series(series_id) if series_id else None
+                video_path = ep.get("rendered_video_path", "")
+                ep_num = ep.get("episode_number", 1)
+                series_title = series.get("title", "Series") if series else "Series"
+                title = f"{series_title} - Part {ep_num}"
+                text = ep.get("main_content") or ep.get("opening_hook") or ep.get("payoff_text") or title
+                duration = float(ep.get("duration") or 45.0)
+                job_id = series.get("job_id") if series else None
+                account_id = series.get("account_id") if series else "acc_motivation"
+                series_info = {
+                    "series_id": series_id,
+                    "series_title": series_title,
+                    "episode_number": ep_num,
+                    "total_episodes": series.get("episode_count") if series else 3,
+                    "is_final_episode": bool(ep.get("is_final_episode", False)),
+                    "next_teaser": ep.get("next_teaser", "")
+                }
+                # Fallback to source video if rendered video not yet produced
+                if (not video_path or not os.path.exists(video_path)) and job_id:
+                    job = get_job(job_id)
+                    if job and job.get("source_path") and os.path.exists(job.get("source_path")):
+                        video_path = job["source_path"]
+        except Exception as ex:
+            print(f"[!] Target resolution error for episode #{target_id}: {ex}")
+
+    elif target_type == "long_form":
+        job = get_job(target_id_str)
+        if job:
+            video_path = job.get("source_path", "")
+            title = job.get("title") or "Long-form Video"
+            duration = float(job.get("duration") or 120.0)
+            account_id = job.get("account_id") or "acc_motivation"
+            job_id = target_id_str
+            t_data = _resolve_transcript_data(job_id)
+            if t_data and "text" in t_data:
+                text = t_data["text"]
+            if t_data and "words" in t_data:
+                words = t_data["words"]
+
+    acc = get_account(account_id) or {}
+    niche = acc.get("niche", "Motivation")
+    handle = acc.get("handle", "@vediohooks")
+
+    return {
+        "video_path": video_path,
+        "title": title,
+        "text": text,
+        "duration": duration,
+        "account_id": account_id,
+        "job_id": job_id,
+        "series_info": series_info,
+        "niche": niche,
+        "handle": handle,
+        "words": words
+    }
+
+
+@app.post("/api/metadata/generate")
+def generate_metadata_endpoint(req: MetadataGenerateRequest):
+    """Generates platform-specific SEO metadata for a short, episode, or long-form video."""
+    ctx = _resolve_target_context(req.target_type, req.target_id)
+    niche = req.niche or ctx["niche"]
+    title = req.custom_title or ctx["title"]
+
+    meta_res = generate_video_metadata(
+        target_type=req.target_type,
+        target_id=req.target_id,
+        title=title,
+        text=ctx["text"],
+        niche=niche,
+        job_id=ctx["job_id"],
+        series_info=ctx["series_info"],
+        duration=ctx["duration"],
+        words=ctx["words"],
+        handle=ctx["handle"]
+    )
+
+    save_video_metadata(
+        target_type=req.target_type,
+        target_id=req.target_id,
+        title=title,
+        niche=niche,
+        youtube_data=meta_res.youtube.model_dump(),
+        instagram_data=meta_res.instagram.model_dump(),
+        tiktok_data=meta_res.tiktok.model_dump(),
+        title_variations=meta_res.title_variations.model_dump(),
+        quality_score=meta_res.quality.overall_score,
+        quality_breakdown=meta_res.quality.model_dump(),
+        job_id=ctx["job_id"],
+        account_id=ctx["account_id"]
+    )
+
+    return {"success": True, "metadata": get_video_metadata(req.target_type, req.target_id)}
+
+
+@app.get("/api/metadata/{target_type}/{target_id}")
+def get_metadata_endpoint(target_type: str, target_id: str):
+    """Retrieves metadata from SQLite or generates on-the-fly if not found."""
+    meta = get_video_metadata(target_type, target_id)
+    if not meta:
+        ctx = _resolve_target_context(target_type, target_id)
+        meta_res = generate_video_metadata(
+            target_type=target_type,
+            target_id=target_id,
+            title=ctx["title"],
+            text=ctx["text"],
+            niche=ctx["niche"],
+            job_id=ctx["job_id"],
+            series_info=ctx["series_info"],
+            duration=ctx["duration"],
+            words=ctx["words"],
+            handle=ctx["handle"]
+        )
+        save_video_metadata(
+            target_type=target_type,
+            target_id=target_id,
+            title=ctx["title"],
+            niche=ctx["niche"],
+            youtube_data=meta_res.youtube.model_dump(),
+            instagram_data=meta_res.instagram.model_dump(),
+            tiktok_data=meta_res.tiktok.model_dump(),
+            title_variations=meta_res.title_variations.model_dump(),
+            quality_score=meta_res.quality.overall_score,
+            quality_breakdown=meta_res.quality.model_dump(),
+            job_id=ctx["job_id"],
+            account_id=ctx["account_id"]
+        )
+        meta = get_video_metadata(target_type, target_id)
+
+    return {"success": True, "metadata": meta}
+
+
+@app.post("/api/metadata/{target_type}/{target_id}/save")
+def save_metadata_endpoint(target_type: str, target_id: str, req: MetadataSaveRequest):
+    """Saves user-modified metadata fields persistently to SQLite."""
+    meta_id = save_video_metadata(
+        target_type=target_type,
+        target_id=target_id,
+        title=req.title,
+        niche=req.niche,
+        youtube_data=req.youtube,
+        instagram_data=req.instagram,
+        tiktok_data=req.tiktok,
+        title_variations=req.title_variations,
+        quality_score=req.quality_score or 85,
+        account_id=req.account_id or "acc_motivation",
+        status="approved"
+    )
+    return {"success": True, "metadata_id": meta_id, "metadata": get_video_metadata(target_type, target_id)}
+
+
+@app.post("/api/metadata/{target_type}/{target_id}/regenerate-field")
+def regenerate_metadata_field_endpoint(target_type: str, target_id: str, req: MetadataRegenerateFieldRequest):
+    """Regenerates a specific metadata field (title, description, caption, hashtags)."""
+    ctx = _resolve_target_context(target_type, target_id)
+    meta = get_video_metadata(target_type, target_id)
+    curr_title = meta.get("title") if meta else ctx["title"]
+    niche = meta.get("niche") if meta else ctx["niche"]
+
+    if req.field_name == "title":
+        t_vars = build_title_variations(curr_title, niche, [], ctx["series_info"])
+        var_type = req.variation_type or "curiosity_driven"
+        val = getattr(t_vars, var_type, curr_title)
+        update_video_metadata_field(target_type, target_id, "youtube", "title", val)
+    elif req.field_name == "caption" and req.platform == "instagram":
+        ig = generate_instagram_metadata(curr_title, ctx["text"], niche, ctx["series_info"], ctx["handle"])
+        val = ig.caption
+        update_video_metadata_field(target_type, target_id, "instagram", "caption", val)
+    elif req.field_name == "hashtags" and req.platform == "instagram":
+        ig = generate_instagram_metadata(curr_title, ctx["text"], niche, ctx["series_info"], ctx["handle"])
+        val = ig.hashtags
+        update_video_metadata_field(target_type, target_id, "instagram", "hashtags", val)
+    elif req.field_name == "description" and req.platform == "youtube":
+        yt = generate_youtube_metadata(curr_title, ctx["text"], niche, target_type in ("short", "episode"), ctx["series_info"], ctx["duration"], ctx["words"])
+        val = yt.description
+        update_video_metadata_field(target_type, target_id, "youtube", "description", val)
+    elif req.field_name == "caption" and req.platform == "tiktok":
+        tt = generate_tiktok_metadata(curr_title, ctx["text"], niche, ctx["series_info"])
+        val = tt.caption
+        update_video_metadata_field(target_type, target_id, "tiktok", "caption", val)
+    else:
+        val = curr_title
+
+    return {"success": True, "field_name": req.field_name, "value": val, "metadata": get_video_metadata(target_type, target_id)}
+
+
+@app.post("/api/metadata/batch-generate")
+def batch_generate_metadata_endpoint(req: MetadataBatchRequest):
+    """Batch generates metadata for multiple shorts or episodes."""
+    results = []
+    for item in req.items:
+        t_type = item.get("target_type", "short")
+        t_id = item.get("target_id")
+        niche = item.get("niche", "Motivation")
+        ctx = _resolve_target_context(t_type, t_id)
+        meta_res = generate_video_metadata(
+            target_type=t_type,
+            target_id=t_id,
+            title=item.get("title") or ctx["title"],
+            text=ctx["text"],
+            niche=niche,
+            job_id=ctx["job_id"],
+            series_info=ctx["series_info"],
+            duration=ctx["duration"],
+            words=ctx["words"],
+            handle=ctx["handle"]
+        )
+        save_video_metadata(
+            target_type=t_type,
+            target_id=t_id,
+            title=meta_res.title,
+            niche=niche,
+            youtube_data=meta_res.youtube.model_dump(),
+            instagram_data=meta_res.instagram.model_dump(),
+            tiktok_data=meta_res.tiktok.model_dump(),
+            title_variations=meta_res.title_variations.model_dump(),
+            quality_score=meta_res.quality.overall_score,
+            quality_breakdown=meta_res.quality.model_dump(),
+            job_id=ctx["job_id"],
+            account_id=ctx["account_id"]
+        )
+        results.append({"target_type": t_type, "target_id": t_id, "status": "generated"})
+    return {"success": True, "processed": len(results), "results": results}
+
+
+# =====================================================================
+# --- AI THUMBNAIL & COVER STUDIO ENDPOINTS ---
+# =====================================================================
+
+@app.post("/api/thumbnails/generate")
+def generate_thumbnails_endpoint(req: ThumbnailGenerateRequest):
+    """Generates 3 high-CTR thumbnail variations with face detection and safe zone calculation."""
+    if req.video_path and os.path.exists(req.video_path):
+        from src.thumbnail_engine import generate_cover_thumbnails
+        covers = generate_cover_thumbnails(
+            video_path=req.video_path,
+            title=req.title or "VIRAL SHORT",
+            niche=req.niche or "Motivation",
+            time_sec=req.time_sec or 1.0
+        )
+        return {"covers": covers, "variations": covers, "success": True}
+
+    target_type = req.target_type or "short"
+    ctx = _resolve_target_context(target_type, req.target_id)
+    video_path = ctx["video_path"]
+
+    if not video_path or not os.path.exists(video_path):
+        # Look for candidate video in output or temp
+        candidates = list(Path("output").glob("*.mp4")) + list(Path("temp").glob("*.mp4"))
+        if candidates:
+            video_path = str(candidates[0])
+        else:
+            raise HTTPException(status_code=404, detail="No video file found to extract thumbnail frames.")
+
+    niche = req.niche or ctx["niche"]
+    aspect_ratio = req.aspect_ratio or "9:16"
+    style_mode = req.style_mode or "auto"
+
+    result = generate_thumbnail_suite(
+        video_path=video_path,
+        target_type=target_type,
+        target_id=req.target_id,
+        title=ctx["title"],
+        niche=niche,
+        start_sec=0.0,
+        end_sec=max(1.0, ctx["duration"]),
+        aspect_ratio=aspect_ratio,
+        style_mode=style_mode,
+        brand_handle=req.brand_handle or ctx["handle"],
+        custom_headline=req.custom_headline
+    )
+
+    saved_assets = []
+    for idx, var in enumerate(result.variations):
+        asset_id = save_thumbnail_asset(
+            target_type=target_type,
+            target_id=req.target_id,
+            image_path=var.image_path,
+            headline=var.headline,
+            variation_type=var.variation_type,
+            aspect_ratio=var.aspect_ratio,
+            style_mode=var.style_mode,
+            source_timestamp=var.source_timestamp,
+            is_selected=1 if idx == 0 else 0,
+            job_id=ctx["job_id"],
+            account_id=ctx["account_id"]
+        )
+        saved_assets.append({
+            "id": asset_id,
+            "variation_type": var.variation_type,
+            "headline": var.headline,
+            "image_path": var.image_path,
+            "is_selected": (idx == 0)
+        })
+
+    return {
+        "success": True,
+        "covers": saved_assets,
+        "aspect_ratio": aspect_ratio,
+        "style_mode": style_mode,
+        "selected_frame": result.selected_frame.model_dump(),
+        "candidates_count": len(result.all_candidates),
+        "variations": saved_assets,
+        "grid_crop_preview_path": result.grid_crop_preview_path
+    }
+
+
+@app.get("/api/thumbnails/{target_type}/{target_id}")
+def list_thumbnails_endpoint(target_type: str, target_id: str):
+    """Retrieves all generated thumbnail variations for a target."""
+    assets = list_thumbnail_assets(target_type=target_type, target_id=target_id, limit=50)
+    return {"success": True, "thumbnails": assets}
+
+
+@app.post("/api/thumbnails/{asset_id}/select")
+def select_thumbnail_endpoint(asset_id: int, req: ThumbnailSelectRequest):
+    """Marks a specific thumbnail variation as the active cover."""
+    success = select_thumbnail_asset(asset_id, req.target_type, req.target_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Thumbnail asset not found")
+    return {"success": True, "selected_asset_id": asset_id}
+
+
+@app.get("/api/thumbnails/{asset_id}/image")
+def stream_thumbnail_image_endpoint(asset_id: int):
+    """Streams a high-resolution JPG thumbnail image file."""
+    asset = get_thumbnail_asset(asset_id)
+    if not asset or not asset.get("image_path"):
+        raise HTTPException(status_code=404, detail="Thumbnail asset not found")
+    p = Path(asset["image_path"])
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail image file missing from disk")
+    return FileResponse(str(p), media_type="image/jpeg")
+
+
+@app.post("/api/thumbnails/extract-frames")
+def extract_frames_endpoint(req: ThumbnailExtractFramesRequest):
+    """Extracts candidate video frames with face detection & sharpness scoring for interactive scrubbing."""
+    ctx = _resolve_target_context(req.target_type, req.target_id)
+    video_path = ctx["video_path"]
+    if not video_path or not os.path.exists(video_path):
+        candidates = list(Path("output").glob("*.mp4")) + list(Path("temp").glob("*.mp4"))
+        if candidates:
+            video_path = str(candidates[0])
+        else:
+            raise HTTPException(status_code=404, detail="No video file found to extract frames.")
+
+    candidates = extract_candidate_frames(
+        video_path=video_path,
+        start_sec=0.0,
+        end_sec=max(1.0, ctx["duration"])
+    )
+    return {"success": True, "candidates": [c.model_dump() for c in candidates]}
+
+
+@app.post("/api/thumbnails/batch-generate")
+def batch_generate_thumbnails_endpoint(req: BatchThumbnailsRequest):
+    """Batch generates thumbnails for multiple videos or episodes."""
+    results = []
+    for item in req.items:
+        t_type = item.get("target_type", "short")
+        t_id = item.get("target_id")
+        ctx = _resolve_target_context(t_type, t_id)
+        v_path = ctx["video_path"]
+        if v_path and os.path.exists(v_path):
+            suite = generate_thumbnail_suite(
+                video_path=v_path,
+                target_type=t_type,
+                target_id=t_id,
+                title=ctx["title"],
+                niche=ctx["niche"],
+                start_sec=0.0,
+                end_sec=max(1.0, ctx["duration"]),
+                aspect_ratio="9:16",
+                style_mode="auto"
+            )
+            for idx, var in enumerate(suite.variations):
+                save_thumbnail_asset(
+                    target_type=t_type,
+                    target_id=t_id,
+                    image_path=var.image_path,
+                    headline=var.headline,
+                    variation_type=var.variation_type,
+                    aspect_ratio=var.aspect_ratio,
+                    style_mode=var.style_mode,
+                    source_timestamp=var.source_timestamp,
+                    is_selected=1 if idx == 0 else 0,
+                    job_id=ctx["job_id"],
+                    account_id=ctx["account_id"]
+                )
+            results.append({"target_type": t_type, "target_id": t_id, "status": "generated"})
+        else:
+            results.append({"target_type": t_type, "target_id": t_id, "status": "skipped_no_video"})
+    return {"success": True, "processed": len(results), "results": results}
+
+
+# =====================================================================
+# --- PUBLISHING READINESS & PACKAGE EXPORT ENDPOINTS ---
+# =====================================================================
+
+@app.get("/api/publishing/readiness/{target_type}/{target_id}")
+def check_publishing_readiness_endpoint(target_type: str, target_id: str, platform: str = "instagram"):
+    """Evaluates 8 pre-flight criteria and returns a 0-100% readiness score with actionable checklist."""
+    ctx = _resolve_target_context(target_type, target_id)
+    meta = get_video_metadata(target_type, target_id)
+    thumbs = list_thumbnail_assets(target_type=target_type, target_id=target_id, limit=5)
+    selected_thumb = next((t["image_path"] for t in thumbs if t.get("is_selected")), (thumbs[0]["image_path"] if thumbs else None))
+
+    report = validate_publishing_readiness(
+        target_type=target_type,
+        target_id=target_id,
+        video_path=ctx["video_path"],
+        metadata=meta,
+        thumbnail_path=selected_thumb,
+        platform=platform,
+        series_info=ctx["series_info"]
+    )
+    return {"success": True, "report": report.model_dump()}
+
+
+@app.get("/api/publishing/export-package/{target_type}/{target_id}")
+def export_publishing_package_endpoint(target_type: str, target_id: str):
+    """Creates and downloads a complete publishing ZIP bundle (video, covers, JSON, platform captions)."""
+    ctx = _resolve_target_context(target_type, target_id)
+    meta = get_video_metadata(target_type, target_id) or {}
+    thumbs = list_thumbnail_assets(target_type=target_type, target_id=target_id, limit=5)
+    selected_thumb = next((t["image_path"] for t in thumbs if t.get("is_selected")), (thumbs[0]["image_path"] if thumbs else None))
+
+    zip_path = export_publishing_bundle(
+        target_type=target_type,
+        target_id=target_id,
+        video_path=ctx["video_path"],
+        metadata=meta,
+        thumbnail_path=selected_thumb
+    )
+
+    if not os.path.exists(zip_path):
+        raise HTTPException(status_code=500, detail="Failed to construct publishing ZIP package")
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=Path(zip_path).name
+    )
+
+
 
 
 # --- Premium Commercial SaaS Dashboard UI (Single-Page App) ---
@@ -1811,6 +2888,41 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       .btn-emergency { padding-inline: 0.55rem; }
       .header-right > .btn-primary { padding-inline: 0.7rem; }
     }
+    /* Series Studio Styling */
+    .series-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 1.25rem; }
+    .series-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1.25rem; transition: all 0.2s; display: flex; flex-direction: column; gap: 0.85rem; }
+    .series-card:hover { border-color: rgba(163, 230, 53, 0.4); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+    .series-badge { font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .series-badge.auto { background: rgba(163, 230, 53, 0.15); color: #a3e635; border: 1px solid rgba(163, 230, 53, 0.3); }
+    .series-badge.guided { background: rgba(14, 165, 233, 0.15); color: #0ea5e9; border: 1px solid rgba(14, 165, 233, 0.3); }
+    .series-badge.custom { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .timeline-container { background: rgba(16, 23, 28, 0.9); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1.5rem; overflow-x: auto; margin-bottom: 1.5rem; }
+    .timeline-flow { display: flex; align-items: center; gap: 0.5rem; min-width: max-content; }
+    .timeline-node { background: var(--bg-card); border: 2px solid var(--border); border-radius: var(--radius-sm); padding: 0.85rem 1rem; width: 220px; flex-shrink: 0; transition: all 0.2s; position: relative; }
+    .timeline-node.final { border-color: #34d399; }
+    .timeline-node.active-node { border-color: var(--primary); box-shadow: 0 0 15px rgba(163, 230, 53, 0.2); }
+    .timeline-bridge { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 140px; flex-shrink: 0; position: relative; padding: 0 0.5rem; }
+    .timeline-arrow { width: 100%; height: 2px; background: linear-gradient(90deg, rgba(163,230,53,0.3), var(--primary), rgba(163,230,53,0.3)); position: relative; margin-top: 0.35rem; }
+    .timeline-arrow::after { content: ''; position: absolute; right: 0; top: -4px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--primary); }
+    .cliffhanger-pill { font-size: 0.68rem; font-weight: 700; background: rgba(244, 63, 94, 0.15); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.35); border-radius: 9999px; padding: 0.2rem 0.6rem; text-align: center; white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+    .episode-editor-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1.25rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.85rem; }
+    .episode-editor-card.final { border-left: 4px solid #34d399; }
+    .quality-gauge { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.85rem; }
+    .variation-chip { padding: 0.35rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s ease; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-dim); }
+    .variation-chip:hover { border-color: var(--primary); color: #fff; background: rgba(163,230,53,0.1); }
+    .variation-chip.active { background: rgba(163,230,53,0.2); border-color: var(--primary); color: var(--primary); }
+    .platform-tab-btn { padding: 0.55rem 1.25rem; font-size: 0.85rem; font-weight: 700; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; gap: 0.5rem; }
+    .platform-tab-btn.active { color: #fff; border-bottom-color: var(--primary); background: rgba(255,255,255,0.02); }
+    .mobile-mockup-frame { border: 8px solid #1e293b; border-radius: 36px; background: #000; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); width: 300px; max-width: 100%; position: relative; margin: 0 auto; }
+    .mockup-status-bar { height: 24px; background: #000; display: flex; justify-content: space-between; align-items: center; padding: 0 1rem; font-size: 0.65rem; color: #fff; }
+    .mockup-screen { position: relative; width: 100%; height: 533px; background: #111; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; padding: 1rem; color: #fff; }
+    .thumbnail-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; display: flex; flex-direction: column; transition: transform 0.2s, border-color 0.2s; position: relative; }
+    .thumbnail-card:hover { transform: translateY(-3px); border-color: rgba(163,230,53,0.4); }
+    .thumbnail-card.selected { border-color: var(--primary); box-shadow: 0 0 16px rgba(163,230,53,0.25); }
+    .frame-scrubber { display: flex; gap: 0.75rem; overflow-x: auto; padding: 0.5rem 0; scrollbar-width: thin; }
+    .frame-scrubber-item { width: 110px; flex-shrink: 0; cursor: pointer; border: 2px solid transparent; border-radius: var(--radius-sm); overflow: hidden; background: #000; position: relative; }
+    .frame-scrubber-item.active { border-color: var(--primary); }
+    .readiness-pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.65rem; border-radius: 9999px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -1847,6 +2959,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         AI Dubbing Lab
         <span class="nav-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);">NEW</span>
       </div>
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('series-studio')">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+        Series Studio
+        <span class="nav-badge" style="background: rgba(163, 230, 53, 0.2); color: #a3e635; border: 1px solid rgba(163, 230, 53, 0.4);">CLIFFHANGER</span>
+      </div>
 
       <div class="nav-group-label">Multi-Account & Strategy</div>
       <div class="nav-item" role="button" tabindex="0" onclick="switchTab('accounts')">
@@ -1863,6 +2980,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
 
       <div class="nav-group-label">Publishing & Meta</div>
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('metadata-studio')">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
+        AI Metadata Studio
+        <span class="nav-badge" style="background: rgba(14, 165, 233, 0.2); color: #0ea5e9; border: 1px solid rgba(14, 165, 233, 0.4);">SEO</span>
+      </div>
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('thumbnail-studio')">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        Thumbnail Studio
+        <span class="nav-badge" style="background: rgba(234, 179, 8, 0.2); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.4);">HIGH CTR</span>
+      </div>
       <div class="nav-item" role="button" tabindex="0" onclick="switchTab('calendar')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         Publishing Calendar
@@ -2464,6 +3591,569 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
       </section>
 
+      <!-- TAB: SERIES STUDIO (AI CLIFFHANGER SERIES ENGINE) -->
+      <section id="tab-series-studio" class="tab-view">
+        <!-- Series Studio Top Banner -->
+        <div class="card" style="margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(163, 230, 53, 0.08) 0%, rgba(15, 18, 28, 0.95) 100%); border-color: rgba(163, 230, 53, 0.3);">
+          <div class="card-header" style="flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span style="font-size: 1.5rem;">🎬</span>
+                <div class="card-title" style="font-size: 1.35rem;">AI Cliffhanger Series Engine</div>
+                <span class="badge" style="background: rgba(163, 230, 53, 0.2); color: #a3e635; border: 1px solid rgba(163, 230, 53, 0.4);">Binge-Worthy Shorts</span>
+              </div>
+              <div class="card-subtitle" style="margin-top: 0.35rem;">
+                Transform long-form horizontal videos into interconnected multi-episode series with opening hooks, narrative continuity, and scroll-stopping cliffhangers.
+              </div>
+            </div>
+            <div style="display: flex; gap: 0.75rem; align-items: center;">
+              <button class="btn-primary" onclick="toggleSeriesCreatorModal(true)">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 16px; height: 16px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                Create AI Series
+              </button>
+              <button class="btn-secondary" onclick="loadSeriesStudio()">🔄 Refresh</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Create Series Modal / Slide-out Panel -->
+        <div id="seriesCreatorModal" class="card" style="display: none; margin-bottom: 1.5rem; border: 1px solid rgba(163, 230, 53, 0.4); background: rgba(18, 27, 33, 0.98);">
+          <div class="card-header">
+            <div>
+              <div class="card-title">New Multi-Episode Series Generator</div>
+              <div class="card-subtitle">Select source video, generation mode, and narrative parameters.</div>
+            </div>
+            <button class="btn-secondary" onclick="toggleSeriesCreatorModal(false)">✕ Close</button>
+          </div>
+          <div class="grid-3" style="gap: 1rem; margin-top: 1rem;">
+            <div>
+              <label class="form-label">Source Video (Transcribed Job)</label>
+              <select id="seriesSourceJobSelect" class="form-input" onchange="onSeriesJobSelected()">
+                <option value="">-- Choose a Transcribed Video --</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">Generation Mode</label>
+              <select id="seriesGenModeSelect" class="form-input" onchange="onSeriesModeChanged()">
+                <option value="auto">MODE 1: AUTO SERIES (Autonomous Story Arc & Cliffhangers)</option>
+                <option value="guided">MODE 2: GUIDED SERIES (Inspect & Choose Story Arcs)</option>
+                <option value="custom">MODE 3: CUSTOM SERIES (Custom Boundaries & Range)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">Target Account</label>
+              <select id="seriesAccountSelect" class="form-input">
+                <option value="acc_motivation">🔥 Apex Mindset & Discipline (Motivation)</option>
+                <option value="acc_cricket">🏏 Cricket Vault & Analysis (Cricket)</option>
+                <option value="acc_ai_study">🤖 AI Tools & Study Hacks (AI & Study)</option>
+                <option value="acc_fitness">💪 Iron Physique & Training (Gym & Fitness)</option>
+                <option value="acc_general">🌍 Curiosity Stream & Discoveries (General)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Custom Mode Options -->
+          <div id="seriesCustomOptions" class="grid-3" style="display: none; gap: 1rem; margin-top: 1rem; padding: 1rem; background: rgba(0,0,0,0.25); border-radius: var(--radius-sm);">
+            <div>
+              <label class="form-label">Custom Start Timestamp (sec)</label>
+              <input type="number" id="seriesCustomStart" class="form-input" value="0.0" step="1.0" min="0">
+            </div>
+            <div>
+              <label class="form-label">Custom End Timestamp (sec)</label>
+              <input type="number" id="seriesCustomEnd" class="form-input" value="180.0" step="1.0" min="5">
+            </div>
+            <div>
+              <label class="form-label">Desired Episode Count</label>
+              <input type="number" id="seriesEpisodeCount" class="form-input" value="3" min="2" max="8">
+            </div>
+          </div>
+
+          <!-- Guided Mode Story Arcs Container -->
+          <div id="seriesGuidedContainer" style="display: none; margin-top: 1.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Detected Story Arcs in Source Video</div>
+              <button class="btn-secondary" id="btnAnalyzeArcs" onclick="triggerAnalyzeStoryArcs()">🔍 Analyze Video for Arcs</button>
+            </div>
+            <div id="guidedArcsList" style="display: flex; flex-direction: column; gap: 0.75rem;">
+              <div style="color: var(--text-muted); font-size: 0.85rem; padding: 1rem; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-sm);">
+                Click "Analyze Video for Arcs" to let the AI discover potential storylines and turning points.
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+            <button class="btn-secondary" onclick="toggleSeriesCreatorModal(false)">Cancel</button>
+            <button class="btn-primary" id="btnExecuteSeriesGen" onclick="executeGenerateSeries()">
+              ⚡ Generate AI Series
+            </button>
+          </div>
+        </div>
+
+        <!-- SERIES LIBRARY VIEW -->
+        <div id="seriesLibraryContainer">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <div>
+              <h3 style="font-size: 1.15rem; font-weight: 700;">Series Library</h3>
+              <p style="color: var(--text-muted); font-size: 0.82rem;">All interconnected episodic short series created from your source footage.</p>
+            </div>
+            <div style="display: flex; gap: 0.75rem; align-items: center;">
+              <select id="seriesStatusFilter" class="form-input" style="width: 140px; font-size: 0.82rem;" onchange="loadSeriesStudio()">
+                <option value="all">All Statuses</option>
+                <option value="ready">Ready</option>
+                <option value="rendering">Rendering</option>
+                <option value="completed">Completed</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="series-grid" id="seriesGridContainer">
+            <div style="grid-column: 1 / -1; text-align: center; padding: 3rem; color: var(--text-muted); border: 1px dashed var(--border); border-radius: var(--radius-md);">
+              <div style="font-size: 2rem; margin-bottom: 0.5rem;">🎬</div>
+              <div style="font-size: 1.1rem; font-weight: 700; color: #fff;">No AI Series Generated Yet</div>
+              <p style="margin-top: 0.25rem;">Select any transcribed video from your Video Factory and turn it into a binge-worthy multi-episode cliffhanger series.</p>
+              <button class="btn-primary" style="margin-top: 1rem;" onclick="toggleSeriesCreatorModal(true)">+ Create First AI Series</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SERIES DETAILS & TIMELINE STUDIO (Shown when a series is active) -->
+        <div id="seriesStudioDetailView" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <button class="btn-secondary" onclick="closeSeriesDetailView()">← Back to Library</button>
+              <h2 id="activeSeriesTitle" style="font-size: 1.35rem; font-weight: 800; color: #fff;">Series Title</h2>
+              <span id="activeSeriesBadge" class="series-badge auto">AUTO</span>
+              <span id="activeSeriesStatus" class="badge">Ready</span>
+            </div>
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <button class="btn-primary" id="btnBatchRenderActive" onclick="batchRenderActiveSeries()">
+                ▶ Batch Render All (<span id="unrenderedCountBadge">0</span>)
+              </button>
+              <button class="btn-secondary" onclick="exportActiveSeriesPackage()">📥 Export Series Package</button>
+              <button class="btn-secondary" onclick="regenerateActiveSeriesPrompt()">🔄 Regenerate Arc</button>
+              <button class="btn-danger" style="background: rgba(244, 63, 94, 0.12); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.3);" onclick="deleteActiveSeries()">🗑 Delete</button>
+            </div>
+          </div>
+
+          <!-- Story Summary & Narrative Architecture Bar -->
+          <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-header">
+              <div class="card-title">Narrative Architecture & Story Arc</div>
+              <div class="card-subtitle">Semantic analysis and tension curve across the sequence</div>
+            </div>
+            <div class="grid-4" style="gap: 1rem; margin-top: 0.75rem;" id="narrativeArcTelemetry">
+              <div style="background: rgba(0,0,0,0.25); padding: 0.85rem; border-radius: var(--radius-sm); border-left: 3px solid var(--primary);">
+                <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Beginning / Hook</div>
+                <div id="arcBeginningText" style="font-size: 0.82rem; margin-top: 0.25rem; color: #fff;">Initial status quo...</div>
+              </div>
+              <div style="background: rgba(0,0,0,0.25); padding: 0.85rem; border-radius: var(--radius-sm); border-left: 3px solid var(--amber);">
+                <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Central Conflict</div>
+                <div id="arcConflictText" style="font-size: 0.82rem; margin-top: 0.25rem; color: #fff;">Core question hanging...</div>
+              </div>
+              <div style="background: rgba(0,0,0,0.25); padding: 0.85rem; border-radius: var(--radius-sm); border-left: 3px solid #f43f5e;">
+                <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Turning Point</div>
+                <div id="arcTurningPointText" style="font-size: 0.82rem; margin-top: 0.25rem; color: #fff;">Dramatic shift in narrative...</div>
+              </div>
+              <div style="background: rgba(0,0,0,0.25); padding: 0.85rem; border-radius: var(--radius-sm); border-left: 3px solid #34d399;">
+                <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-dim); font-weight: 700;">Final Resolution</div>
+                <div id="arcResolutionText" style="font-size: 0.82rem; margin-top: 0.25rem; color: #fff;">Satisfying payoff and takeaway...</div>
+              </div>
+            </div>
+            <div id="seriesMemoryBar" style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(163, 230, 53, 0.05); border: 1px solid rgba(163, 230, 53, 0.2); border-radius: var(--radius-sm); font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.75rem;">
+              <span>🧠 <strong>Series Continuity State:</strong></span>
+              <span id="seriesMemoryTensionText">Tracking established knowledge and hanging cliffhangers across all episodes.</span>
+            </div>
+          </div>
+
+          <!-- VISUAL EPISODE TIMELINE -->
+          <div class="timeline-container">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Interactive Episode Timeline & Cliffhanger Transitions</div>
+              <span style="font-size: 0.75rem; color: var(--text-muted);">Click any node to jump to episode details</span>
+            </div>
+            <div class="timeline-flow" id="visualTimelineFlow">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- EPISODES LIST & IN-PLACE CONTROLS -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="font-size: 1.15rem; font-weight: 700;">Episodes & Editing Controls</h3>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">Edit titles, hooks, boundaries, or regenerate cliffhangers</span>
+          </div>
+
+          <div id="activeEpisodesList" style="display: flex; flex-direction: column; gap: 1rem;">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Video Preview Modal for Episodes -->
+        <div id="episodePreviewModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; backdrop-filter: blur(8px);">
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); max-width: 500px; width: 90%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h4 id="previewModalTitle" style="font-size: 1.1rem; font-weight: 700;">Episode Preview</h4>
+              <button class="btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeEpisodePreviewModal()">✕</button>
+            </div>
+            <div style="width: 100%; aspect-ratio: 9/16; max-height: 520px; background: #000; border-radius: var(--radius-sm); overflow: hidden; display: flex; align-items: center; justify-content: center;">
+              <video id="previewModalVideo" controls style="width: 100%; height: 100%; object-fit: contain;"></video>
+            </div>
+            <div id="previewModalHookBanner" style="padding: 0.65rem; background: rgba(0,0,0,0.3); border-radius: var(--radius-sm); font-size: 0.82rem; color: var(--primary);"></div>
+            <div style="display: flex; justify-content: flex-end;">
+              <button class="btn-secondary" onclick="closeEpisodePreviewModal()">Close Preview</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: AI METADATA STUDIO -->
+      <section id="tab-metadata-studio" class="tab-view">
+        <div class="card" style="margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(14, 165, 233, 0.08) 0%, rgba(15, 18, 28, 0.95) 100%); border-color: rgba(14, 165, 233, 0.3);">
+          <div class="card-header" style="flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span style="font-size: 1.5rem;">🏷️</span>
+                <div class="card-title" style="font-size: 1.35rem;">AI Metadata & SEO Studio</div>
+                <span class="badge" style="background: rgba(14, 165, 233, 0.2); color: #0ea5e9; border: 1px solid rgba(14, 165, 233, 0.4);">Platform-Native SEO</span>
+              </div>
+              <div class="card-subtitle" style="margin-top: 0.35rem;">
+                Generate high-conversion titles, SEO descriptions, niche hashtags, and audience-targeted keywords for YouTube, Instagram, and TikTok.
+              </div>
+            </div>
+            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+              <button class="btn-primary" onclick="generateActiveMetadata()">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 16px; height: 16px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                Generate AI Metadata
+              </button>
+              <button class="btn-secondary" onclick="saveActiveMetadata()">💾 Save Metadata</button>
+              <button class="btn-secondary" onclick="copyAllActiveMetadata()">📋 Copy All</button>
+              <button class="btn-secondary" onclick="openReadinessModalForActive()">🚀 Readiness Check</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Target Content & Quality Header -->
+        <div class="grid-3" style="gap: 1rem; margin-bottom: 1.5rem;">
+          <div class="card" style="margin-bottom: 0;">
+            <label class="form-label">Select Target Content</label>
+            <select id="metaTargetSelect" class="form-input" onchange="onMetadataTargetChanged()">
+              <option value="">-- Choose Short or Series Episode --</option>
+            </select>
+          </div>
+          <div class="card" style="margin-bottom: 0;">
+            <label class="form-label">Content Niche Profile</label>
+            <select id="metaNicheSelect" class="form-input" onchange="onMetadataNicheChanged()">
+              <option value="Motivation">🔥 Apex Mindset & Discipline (Motivation)</option>
+              <option value="Cricket">🏏 Cricket Vault & Analysis (Cricket)</option>
+              <option value="AI & Study">🤖 AI Tools & Study Hacks (AI & Study)</option>
+              <option value="Gym & Fitness">💪 Iron Physique & Training (Gym & Fitness)</option>
+              <option value="Common / General">🌍 Curiosity Stream & Discoveries (General)</option>
+            </select>
+          </div>
+          <div class="card" style="margin-bottom: 0; display: flex; align-items: center; justify-content: space-between; padding: 1rem;">
+            <div>
+              <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Metadata Quality Score</div>
+              <div id="metaQualityScoreText" style="font-size: 1.6rem; font-weight: 800; color: var(--primary); margin-top: 0.2rem;">-- / 100</div>
+              <div id="metaQualityStatusText" style="font-size: 0.72rem; color: var(--text-muted);">Awaiting generation</div>
+            </div>
+            <div id="metaQualityGauge" class="quality-gauge" style="background: rgba(163,230,53,0.15); color: var(--primary); width: 52px; height: 52px; font-size: 1rem;">--</div>
+          </div>
+        </div>
+
+        <!-- Title Variations Picker -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <span style="font-size: 0.85rem; font-weight: 700; color: #fff;">💡 AI Title Variations (Click to apply)</span>
+            <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="regenerateTitleVariations()">🔄 New Variations</button>
+          </div>
+          <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
+            <div id="chipTitleCuriosity" class="variation-chip" onclick="applyTitleVariation('curiosity_driven')">🔍 Curiosity-Driven: <span id="textTitleCuriosity">--</span></div>
+            <div id="chipTitleSEO" class="variation-chip" onclick="applyTitleVariation('seo_focused')">📈 SEO-Focused: <span id="textTitleSEO">--</span></div>
+            <div id="chipTitleEmotional" class="variation-chip" onclick="applyTitleVariation('emotional')">❤️ Emotional: <span id="textTitleEmotional">--</span></div>
+            <div id="chipTitleBold" class="variation-chip" onclick="applyTitleVariation('bold_attention')">⚡ Bold & Urgent: <span id="textTitleBold">--</span></div>
+          </div>
+        </div>
+
+        <!-- Main Editor & Mobile Mockup Grid -->
+        <div style="display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1.2fr); gap: 1.5rem; align-items: start;">
+          <!-- Editor Panel -->
+          <div class="card" style="margin-bottom: 0;">
+            <!-- Platform Tabs -->
+            <div style="display: flex; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem;">
+              <button class="platform-tab-btn active" id="tabBtnYT" onclick="switchMetadataPlatform('youtube')">
+                <svg viewBox="0 0 24 24" fill="currentColor" style="width: 18px; height: 18px; color: #ef4444;"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                YouTube
+              </button>
+              <button class="platform-tab-btn" id="tabBtnIG" onclick="switchMetadataPlatform('instagram')">
+                <svg viewBox="0 0 24 24" fill="currentColor" style="width: 18px; height: 18px; color: #e1306c;"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                Instagram Reels
+              </button>
+              <button class="platform-tab-btn" id="tabBtnTT" onclick="switchMetadataPlatform('tiktok')">
+                <svg viewBox="0 0 24 24" fill="currentColor" style="width: 18px; height: 18px; color: #00f2fe;"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 3 15.68 6.34 6.34 0 0 0 9.35 22a6.33 6.33 0 0 0 6.38-6.32V8.9a8.16 8.16 0 0 0 4.86 1.6V7.05a4.85 4.85 0 0 1-1-.36z"/></svg>
+                TikTok
+              </button>
+            </div>
+
+            <!-- YouTube Fields -->
+            <div id="metaPanelYT">
+              <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                  <label class="form-label" style="margin-bottom: 0;">Video Title</label>
+                  <span id="ytTitleCount" style="font-size: 0.72rem; color: var(--text-dim);">0 / 100</span>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                  <input type="text" id="metaYtTitle" class="form-input" maxlength="100" oninput="updateMetaCounters()">
+                  <button class="btn-secondary" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;" onclick="copyFieldValue('metaYtTitle')">📋</button>
+                </div>
+              </div>
+
+              <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                  <label class="form-label" style="margin-bottom: 0;">Description & Timestamps</label>
+                  <span id="ytDescCount" style="font-size: 0.72rem; color: var(--text-dim);">0 / 5000</span>
+                </div>
+                <textarea id="metaYtDesc" class="form-input" rows="8" maxlength="5000" style="resize: vertical; font-size: 0.82rem;" oninput="updateMetaCounters()"></textarea>
+                <div style="display: flex; justify-content: flex-end; margin-top: 0.35rem; gap: 0.5rem;">
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="copyFieldValue('metaYtDesc')">📋 Copy Description</button>
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="regenerateSpecificField('youtube', 'description')">🔄 Regenerate</button>
+                </div>
+              </div>
+
+              <div class="grid-2" style="gap: 1rem; margin-bottom: 1rem;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                    <label class="form-label" style="margin-bottom: 0;">Searchable Tags</label>
+                    <span id="ytTagsCount" style="font-size: 0.72rem; color: var(--text-dim);">0 / 500</span>
+                  </div>
+                  <input type="text" id="metaYtTags" class="form-input" placeholder="tag1, tag2, tag3" oninput="updateMetaCounters()">
+                </div>
+                <div>
+                  <label class="form-label">Category</label>
+                  <input type="text" id="metaYtCategory" class="form-input" value="People & Blogs">
+                </div>
+              </div>
+
+              <div style="margin-bottom: 1rem;">
+                <label class="form-label">Pinned Comment</label>
+                <input type="text" id="metaYtPinned" class="form-input">
+              </div>
+            </div>
+
+            <!-- Instagram Fields -->
+            <div id="metaPanelIG" style="display: none;">
+              <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                  <label class="form-label" style="margin-bottom: 0;">First-Line Hook (Before '...more')</label>
+                  <span id="igHookCount" style="font-size: 0.72rem; color: var(--text-dim);">0 / 85</span>
+                </div>
+                <input type="text" id="metaIgHook" class="form-input" maxlength="85" oninput="updateMetaCounters()">
+              </div>
+
+              <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                  <label class="form-label" style="margin-bottom: 0;">Instagram Caption</label>
+                  <span id="igCaptionCount" style="font-size: 0.72rem; color: var(--text-dim);">0 / 2200</span>
+                </div>
+                <textarea id="metaIgCaption" class="form-input" rows="8" maxlength="2200" style="resize: vertical; font-size: 0.82rem;" oninput="updateMetaCounters()"></textarea>
+                <div style="display: flex; justify-content: flex-end; margin-top: 0.35rem; gap: 0.5rem;">
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="copyFieldValue('metaIgCaption')">📋 Copy Caption</button>
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="regenerateSpecificField('instagram', 'caption')">🔄 Regenerate</button>
+                </div>
+              </div>
+
+              <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                  <label class="form-label" style="margin-bottom: 0;">Targeted Hashtags</label>
+                  <span id="igTagsCount" style="font-size: 0.72rem; color: var(--text-dim);">0 / 30 tags</span>
+                </div>
+                <input type="text" id="metaIgHashtags" class="form-input" oninput="updateMetaCounters()">
+              </div>
+
+              <div style="margin-bottom: 1rem;">
+                <label class="form-label">Pinned Question / Engagement Prompt</label>
+                <input type="text" id="metaIgPinned" class="form-input">
+              </div>
+            </div>
+
+            <!-- TikTok Fields -->
+            <div id="metaPanelTT" style="display: none;">
+              <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                  <label class="form-label" style="margin-bottom: 0;">TikTok Caption & Hashtags</label>
+                  <span id="ttCaptionCount" style="font-size: 0.72rem; color: var(--text-dim);">0 / 2200</span>
+                </div>
+                <textarea id="metaTtCaption" class="form-input" rows="5" maxlength="2200" style="resize: vertical; font-size: 0.82rem;" oninput="updateMetaCounters()"></textarea>
+                <div style="display: flex; justify-content: flex-end; margin-top: 0.35rem; gap: 0.5rem;">
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="copyFieldValue('metaTtCaption')">📋 Copy Caption</button>
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="regenerateSpecificField('tiktok', 'caption')">🔄 Regenerate</button>
+                </div>
+              </div>
+              <div style="margin-bottom: 1rem;">
+                <label class="form-label">Search Keywords</label>
+                <input type="text" id="metaTtKeywords" class="form-input" placeholder="keyword1, keyword2">
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Mobile Mockup Preview -->
+          <div class="card" style="margin-bottom: 0; display: flex; flex-direction: column; align-items: center;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center; margin-bottom: 1rem;">
+              <span style="font-size: 0.85rem; font-weight: 700; color: #fff;">📱 Live Platform Feed Preview</span>
+              <span id="mockupPlatformBadge" class="badge" style="background: rgba(225,48,108,0.2); color: #e1306c;">Instagram Reel</span>
+            </div>
+
+            <div class="mobile-mockup-frame">
+              <div class="mockup-status-bar">
+                <span>9:41</span>
+                <span>5G 100%</span>
+              </div>
+              <div class="mockup-screen" id="mockupScreenArea">
+                <div style="position: absolute; right: 12px; bottom: 80px; display: flex; flex-direction: column; gap: 14px; align-items: center;">
+                  <div style="text-align: center;"><span style="font-size: 1.2rem;">❤️</span><div style="font-size: 0.6rem;">84.2K</div></div>
+                  <div style="text-align: center;"><span style="font-size: 1.2rem;">💬</span><div style="font-size: 0.6rem;">1.2K</div></div>
+                  <div style="text-align: center;"><span style="font-size: 1.2rem;">↗️</span><div style="font-size: 0.6rem;">Share</div></div>
+                  <div style="text-align: center;"><span style="font-size: 1.2rem;">🔖</span></div>
+                </div>
+
+                <div style="max-width: 82%;">
+                  <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                    <span style="font-size: 0.9rem;">⚡</span>
+                    <strong id="mockupHandle" style="font-size: 0.75rem;">@vediohooks</strong>
+                    <span style="font-size: 0.65rem; border: 1px solid rgba(255,255,255,0.4); padding: 1px 4px; border-radius: 4px;">Follow</span>
+                  </div>
+                  <div id="mockupCaption" style="font-size: 0.72rem; line-height: 1.35; max-height: 140px; overflow-y: auto; text-shadow: 0 1px 2px rgba(0,0,0,0.8);">
+                    Loading preview...
+                  </div>
+                  <div id="mockupAudioTag" style="font-size: 0.65rem; color: #ddd; margin-top: 6px; display: flex; align-items: center; gap: 4px;">
+                    <span>🎵 Original Audio - VedioHooks AI</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: AI THUMBNAIL STUDIO -->
+      <section id="tab-thumbnail-studio" class="tab-view">
+        <div class="card" style="margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(234, 179, 8, 0.08) 0%, rgba(15, 18, 28, 0.95) 100%); border-color: rgba(234, 179, 8, 0.3);">
+          <div class="card-header" style="flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span style="font-size: 1.5rem;">🖼️</span>
+                <div class="card-title" style="font-size: 1.35rem;">AI Thumbnail & Cover Studio</div>
+                <span class="badge" style="background: rgba(234, 179, 8, 0.2); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.4);">High-CTR Visuals</span>
+              </div>
+              <div class="card-subtitle" style="margin-top: 0.35rem;">
+                Autonomous frame selection with MediaPipe face centering, safe-zone typography, and multi-format canvas export (9:16 vertical and 16:9 widescreen).
+              </div>
+            </div>
+            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+              <button class="btn-primary" onclick="generateActiveThumbnails()">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 16px; height: 16px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                Generate Thumbnail Variations
+              </button>
+              <button class="btn-secondary" onclick="loadThumbnailStudio()">🔄 Refresh</button>
+              <button class="btn-secondary" id="btnToggleGridCrop" onclick="toggleInstagramGridPreview()">📐 Toggle 1:1 Grid Preview</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls Grid -->
+        <div class="grid-4" style="gap: 1rem; margin-bottom: 1.5rem;">
+          <div class="card" style="margin-bottom: 0;">
+            <label class="form-label">Target Content</label>
+            <select id="thumbTargetSelect" class="form-input" onchange="onThumbnailTargetChanged()">
+              <option value="">-- Choose Short or Series Episode --</option>
+            </select>
+          </div>
+          <div class="card" style="margin-bottom: 0;">
+            <label class="form-label">Platform & Canvas Ratio</label>
+            <select id="thumbPlatformSelect" class="form-input" onchange="onThumbnailConfigChanged()">
+              <option value="9:16">📱 9:16 Vertical (Shorts, Reels, TikTok - 1080x1920)</option>
+              <option value="16:9">🖥️ 16:9 Widescreen (YouTube Long-form - 1280x720)</option>
+            </select>
+          </div>
+          <div class="card" style="margin-bottom: 0;">
+            <label class="form-label">Generation Mode</label>
+            <select id="thumbModeSelect" class="form-input" onchange="onThumbnailConfigChanged()">
+              <option value="auto">MODE 1: AI Auto Composition (Optimal Frame + Text)</option>
+              <option value="face_focused">MODE 2: Face-Focused Dramatic Crop (Close-up + Vignette)</option>
+              <option value="cinematic">MODE 3: Cinematic Film Grade (Letterbox + Atmosphere)</option>
+              <option value="custom">MODE 4: Custom Composition (Manual Text & Timing)</option>
+            </select>
+          </div>
+          <div class="card" style="margin-bottom: 0;">
+            <label class="form-label">Custom Headline (Optional)</label>
+            <div style="display: flex; gap: 0.4rem;">
+              <input type="text" id="thumbCustomHeadline" class="form-input" placeholder="e.g. 99% NEVER MAKE IT">
+              <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.3rem 0.5rem;" title="Auto generate headline" onclick="autoSuggestThumbnailHeadline()">💡</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Candidate Video Frame Scrubber -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <div>
+              <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">🎞️ Candidate Video Frames (MediaPipe Face & Sharpness Analyzed)</span>
+              <span style="font-size: 0.75rem; color: var(--text-dim); margin-left: 0.5rem;">Click any frame to use as the base canvas</span>
+            </div>
+            <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" onclick="extractFreshCandidateFrames()">🔍 Re-scan Video</button>
+          </div>
+          <div id="thumbFrameScrubber" class="frame-scrubber">
+            <div style="color: var(--text-dim); font-size: 0.8rem; padding: 1rem;">Select a video to extract candidate frames.</div>
+          </div>
+        </div>
+
+        <!-- 3 Variations Gallery -->
+        <div style="margin-bottom: 1.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <span style="font-weight: 700; font-size: 1rem; color: #fff;">🎨 Generated Thumbnail Concepts</span>
+            <span style="font-size: 0.75rem; color: var(--text-dim);">Select your preferred variation to set as active cover</span>
+          </div>
+
+          <div id="thumbVariationsGallery" class="grid-3" style="gap: 1.5rem;">
+            <div class="card" style="text-align: center; color: var(--text-dim); padding: 3rem 1rem;">
+              Click "Generate Thumbnail Variations" to create 3 high-CTR concepts.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PUBLISHING READINESS MODAL -->
+      <div id="readinessModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 999; align-items: center; justify-content: center; backdrop-filter: blur(8px);">
+        <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); max-width: 620px; width: 92%; max-height: 85vh; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span style="font-size: 1.3rem;">🚀</span>
+              <h4 style="font-size: 1.15rem; font-weight: 700; margin: 0;">Publishing Readiness Pre-flight Check</h4>
+            </div>
+            <button class="btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeReadinessModal()">✕</button>
+          </div>
+
+          <!-- Score Card -->
+          <div style="background: rgba(0,0,0,0.3); border-radius: var(--radius-sm); padding: 1rem; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700;">Overall Readiness Score</div>
+              <div id="readinessScoreVal" style="font-size: 1.8rem; font-weight: 800; color: var(--primary);">--%</div>
+              <div id="readinessStatusBadge" style="font-size: 0.75rem; color: var(--text-muted);">Evaluating...</div>
+            </div>
+            <button class="btn-primary" id="btnDownloadExportPkg" onclick="downloadExportPackageForActive()">
+              📦 Export Publishing Package (ZIP)
+            </button>
+          </div>
+
+          <!-- Checklist Items -->
+          <div id="readinessChecklistArea" style="display: flex; flex-direction: column; gap: 0.6rem;">
+            <!-- Rendered dynamically -->
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; margin-top: 0.5rem;">
+            <button class="btn-secondary" onclick="closeReadinessModal()">Close</button>
+          </div>
+        </div>
+      </div>
+
       <!-- TAB 7: PUBLISHING CALENDAR -->
       <section id="tab-calendar" class="tab-view">
         <div class="card">
@@ -2984,12 +4674,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     // Modal Utilities
+    function openModal(id) { const el = document.getElementById(id); if (el) el.classList.add('active'); }
+    function closeModal(id) { const el = document.getElementById(id); if (el) el.classList.remove('active'); }
     function openCreateAccountModal() { document.getElementById('modalAccount').classList.add('active'); }
     function openCreateSourceModal() {
       populateSourceAccountDropdown();
       document.getElementById('modalSource').classList.add('active');
     }
-    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .split('&').join('&amp;')
+        .split('<').join('&lt;')
+        .split('>').join('&gt;')
+        .split('"').join('&quot;')
+        .split("'").join('&#039;');
+    }
 
     function setMobileNav(open = !document.body.classList.contains('sidebar-open')) {
       document.body.classList.toggle('sidebar-open', open);
@@ -3027,6 +4728,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         factory: ['Video factory', 'Bring in a video and shape it into polished, platform-ready shorts.'],
         library: ['Your video library', 'Review, refine, and prepare your finished vertical videos for publishing.'],
         dubbing: ['AI dubbing lab', 'Create localized voice tracks and manage dubbed versions of your shorts.'],
+        'series-studio': ['Series studio', 'Transform long-form videos into interconnected, cliffhanger-driven short episode series.'],
+        'metadata-studio': ['AI metadata studio', 'Generate and fine-tune SEO-optimized titles, descriptions, and captions for YouTube, Instagram, and TikTok.'],
+        'thumbnail-studio': ['AI thumbnail studio', 'Design high-CTR covers, face-focused frames, and platform previews for 9:16 vertical and 16:9 videos.'],
         accounts: ['Account manager', 'Keep each channel’s brand, schedule, and publishing workflow organized.'],
         'ai-director': ['AI content director', 'Build a practical content blueprint around your niche and audience.'],
         sources: ['Content discovery', 'Organize the channels, playlists, and ideas that feed your content pipeline.'],
@@ -3058,6 +4762,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       else if (tabId === 'factory') loadFactory();
       else if (tabId === 'library') loadLibraryShorts();
       else if (tabId === 'dubbing') loadDubbingLibrary();
+      else if (tabId === 'series-studio') loadSeriesStudio();
+      else if (tabId === 'metadata-studio') loadMetadataStudio();
+      else if (tabId === 'thumbnail-studio') loadThumbnailStudio();
       else if (tabId === 'calendar') loadPublishingQueue();
       else if (tabId === 'analytics') loadAnalytics();
       else if (tabId === 'instagram') loadInstagramInsights();
@@ -5089,6 +6796,1312 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
+    // =====================================================================
+    // --- SERIES STUDIO (AI CLIFFHANGER SERIES ENGINE) CLIENT LOGIC ---
+    // =====================================================================
+    let seriesListCache = [];
+    let currentActiveSeries = null;
+    let selectedStoryArc = null;
+    let candidateArcsCache = [];
+    let seriesJobsCache = [];
+
+    function toggleSeriesCreatorModal(open) {
+      const modal = document.getElementById('seriesCreatorModal');
+      if (modal) modal.style.display = open ? 'block' : 'none';
+      if (open) {
+        populateSeriesJobs();
+        onSeriesModeChanged();
+      }
+    }
+
+    async function populateSeriesJobs() {
+      try {
+        const res = await fetch('/api/jobs?limit=50');
+        const data = await res.json();
+        seriesJobsCache = data.jobs || [];
+        const select = document.getElementById('seriesSourceJobSelect');
+        if (!select) return;
+        const validJobs = seriesJobsCache.filter(j => j.status === 'ready' || j.status === 'completed' || j.transcript_json_path);
+        select.innerHTML = '<option value="">-- Choose a Transcribed Video --</option>' +
+          (validJobs.length > 0 ? validJobs.map(j => `<option value="${j.id}">${j.title || j.id} (${j.duration ? j.duration.toFixed(0) + 's' : ''})</option>`).join('')
+                                : seriesJobsCache.map(j => `<option value="${j.id}">${j.title || j.id} [${j.status}]</option>`).join(''));
+      } catch (err) {
+        console.error('Failed to populate series source jobs:', err);
+      }
+    }
+
+    function onSeriesModeChanged() {
+      const mode = document.getElementById('seriesGenModeSelect').value;
+      const customOpts = document.getElementById('seriesCustomOptions');
+      const guidedContainer = document.getElementById('seriesGuidedContainer');
+      
+      if (customOpts) customOpts.style.display = (mode === 'custom') ? 'grid' : 'none';
+      if (guidedContainer) guidedContainer.style.display = (mode === 'guided') ? 'block' : 'none';
+    }
+
+    function onSeriesJobSelected() {
+      const jobId = document.getElementById('seriesSourceJobSelect').value;
+      const job = seriesJobsCache.find(j => j.id === jobId);
+      if (job && job.duration) {
+        const endInput = document.getElementById('seriesCustomEnd');
+        if (endInput) endInput.value = Math.min(job.duration, 180.0).toFixed(0);
+      }
+    }
+
+    async function triggerAnalyzeStoryArcs() {
+      const jobId = document.getElementById('seriesSourceJobSelect').value;
+      if (!jobId) {
+        alert('Please select a source video first.');
+        return;
+      }
+      const btn = document.getElementById('btnAnalyzeArcs');
+      const container = document.getElementById('guidedArcsList');
+      btn.disabled = true;
+      btn.textContent = '⏳ Analyzing Transcript...';
+      container.innerHTML = '<div style="color: var(--primary); text-align: center; padding: 1rem;">Analyzing narrative arcs, emotional tension, and Q&A blocks...</div>';
+
+      try {
+        const res = await fetch('/api/series/analyze-arcs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_id: jobId })
+        });
+        if (!res.ok) throw new Error('Failed to analyze story arcs');
+        const data = await res.json();
+        candidateArcsCache = data.story_arcs || [];
+        renderCandidateArcs(candidateArcsCache);
+      } catch (err) {
+        container.innerHTML = `<div style="color: #fb7185; padding: 1rem;">Failed to analyze arcs: ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Analyze Video for Arcs';
+      }
+    }
+
+    function renderCandidateArcs(arcs) {
+      const container = document.getElementById('guidedArcsList');
+      if (!arcs || arcs.length === 0) {
+        container.innerHTML = '<div style="color: var(--text-muted); padding: 1rem;">No arcs detected in video. Try Auto Series.</div>';
+        return;
+      }
+      container.innerHTML = arcs.map((arc, idx) => `
+        <div style="background: rgba(0,0,0,0.3); border: 1px solid ${selectedStoryArc && selectedStoryArc.story_id === arc.story_id ? 'var(--primary)' : 'var(--border)'}; border-radius: var(--radius-sm); padding: 1rem; cursor: pointer;" onclick="selectArcForGeneration('${arc.story_id}')">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-weight: 700; color: #fff; font-size: 0.95rem;">${arc.title}</div>
+            <span class="badge" style="background: rgba(163, 230, 53, 0.2); color: var(--primary);">${arc.recommended_episodes} Episodes recommended</span>
+          </div>
+          <div style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.35rem;">${arc.description}</div>
+          <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-dim); display: flex; gap: 1rem;">
+            <span><strong>Turning Point:</strong> ${arc.turning_point ? arc.turning_point.substring(0, 70) + '...' : 'N/A'}</span>
+            <span><strong>Resolution:</strong> ${arc.resolution ? arc.resolution.substring(0, 70) + '...' : 'N/A'}</span>
+          </div>
+          <button class="btn-secondary" style="margin-top: 0.75rem; font-size: 0.78rem; padding: 0.25rem 0.65rem;" onclick="selectArcForGeneration('${arc.story_id}'); event.stopPropagation();">
+            ${selectedStoryArc && selectedStoryArc.story_id === arc.story_id ? '✓ Selected' : 'Choose this Story Arc'}
+          </button>
+        </div>
+      `).join('');
+    }
+
+    function selectArcForGeneration(arcId) {
+      selectedStoryArc = candidateArcsCache.find(a => a.story_id === arcId);
+      renderCandidateArcs(candidateArcsCache);
+    }
+
+    async function executeGenerateSeries() {
+      const jobId = document.getElementById('seriesSourceJobSelect').value;
+      if (!jobId) {
+        alert('Please choose a transcribed video job.');
+        return;
+      }
+      const mode = document.getElementById('seriesGenModeSelect').value;
+      const accountId = document.getElementById('seriesAccountSelect').value;
+      const epCount = parseInt(document.getElementById('seriesEpisodeCount')?.value || '3', 10);
+      const customStart = parseFloat(document.getElementById('seriesCustomStart')?.value || '0');
+      const customEnd = parseFloat(document.getElementById('seriesCustomEnd')?.value || '180');
+
+      const btn = document.getElementById('btnExecuteSeriesGen');
+      btn.disabled = true;
+      btn.textContent = '⚡ Formulating Episodic Series...';
+
+      const payload = {
+        job_id: jobId,
+        account_id: accountId,
+        generation_mode: mode
+      };
+      if (mode === 'guided' && selectedStoryArc) {
+        payload.story_arc = selectedStoryArc;
+        payload.episode_count = selectedStoryArc.recommended_episodes;
+      } else if (mode === 'custom') {
+        payload.custom_start_sec = customStart;
+        payload.custom_end_sec = customEnd;
+        payload.episode_count = epCount;
+      }
+
+      try {
+        const res = await fetch('/api/series/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Generation failed');
+        }
+        const createdSeries = await res.json();
+        toggleSeriesCreatorModal(false);
+        await loadSeriesStudio();
+        openSeriesDetails(createdSeries.id);
+      } catch (err) {
+        alert('Failed to generate series: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ Generate AI Series';
+      }
+    }
+
+    async function loadSeriesStudio() {
+      try {
+        const statusFilter = document.getElementById('seriesStatusFilter')?.value || 'all';
+        const currentAccount = document.getElementById('globalAccountSelect')?.value || 'all';
+        let url = `/api/series?limit=50`;
+        if (statusFilter !== 'all') url += `&status=${statusFilter}`;
+        if (currentAccount !== 'all') url += `&account_id=${currentAccount}`;
+
+        const res = await fetch(url);
+        const data = await res.json();
+        seriesListCache = data.series || [];
+        renderSeriesLibrary(seriesListCache);
+        populateSeriesJobs();
+      } catch (err) {
+        console.error('Failed to load series library:', err);
+      }
+    }
+
+    function renderSeriesLibrary(seriesList) {
+      const container = document.getElementById('seriesGridContainer');
+      if (!container) return;
+
+      if (!seriesList || seriesList.length === 0) {
+        container.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; padding: 3rem; color: var(--text-muted); border: 1px dashed var(--border); border-radius: var(--radius-md);">
+            <div style="font-size: 2.2rem; margin-bottom: 0.5rem;">🎬</div>
+            <div style="font-size: 1.15rem; font-weight: 700; color: #fff;">No AI Series Generated Yet</div>
+            <p style="margin-top: 0.25rem;">Transform any long-form video into an interconnected, binge-worthy cliffhanger series.</p>
+            <button class="btn-primary" style="margin-top: 1rem;" onclick="toggleSeriesCreatorModal(true)">+ Create First AI Series</button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = seriesList.map(s => {
+        const modeClass = s.generation_mode || 'auto';
+        const renderedCount = s.rendered_episodes_count || 0;
+        const totalCount = s.actual_episodes_count || s.episode_count || 0;
+        const qScore = s.quality_score || 85;
+
+        return `
+          <div class="series-card" onclick="openSeriesDetails('${s.id}')">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;">
+              <span class="series-badge ${modeClass}">${(s.generation_mode || 'AUTO').toUpperCase()}</span>
+              <span class="badge" style="${s.status === 'completed' ? 'background: rgba(52, 211, 153, 0.2); color: #34d399;' : 'background: rgba(163, 230, 53, 0.15); color: var(--primary);'}">${s.status.toUpperCase()}</span>
+            </div>
+            <div>
+              <div style="font-weight: 800; font-size: 1.05rem; color: #fff; line-height: 1.3;">${s.title}</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${s.description || 'Interconnected multi-episode short series with cliffhangers.'}</div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.75rem; background: rgba(0,0,0,0.25); border-radius: var(--radius-sm); font-size: 0.8rem;">
+              <div>
+                <span style="color: var(--text-dim);">Episodes:</span>
+                <strong style="color: #fff;"> ${renderedCount}/${totalCount} Rendered</strong>
+              </div>
+              <div style="display: flex; align-items: center; gap: 0.35rem;">
+                <span style="color: var(--text-dim);">Quality:</span>
+                <span style="font-weight: 800; color: ${qScore >= 85 ? 'var(--primary)' : 'var(--amber)'};">${qScore}/100</span>
+              </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 0.5rem;">
+              <span style="font-size: 0.72rem; color: var(--text-dim);">${s.source_video_title ? s.source_video_title.substring(0, 24) + '...' : 'Source Video'}</span>
+              <button class="btn-secondary" style="font-size: 0.78rem; padding: 0.3rem 0.65rem;" onclick="openSeriesDetails('${s.id}'); event.stopPropagation();">
+                Open Studio →
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function openSeriesDetails(seriesId) {
+      try {
+        const res = await fetch(`/api/series/${seriesId}`);
+        if (!res.ok) throw new Error('Series not found');
+        currentActiveSeries = await res.json();
+
+        // Switch to detail view
+        document.getElementById('seriesLibraryContainer').style.display = 'none';
+        document.getElementById('seriesCreatorModal').style.display = 'none';
+        document.getElementById('seriesStudioDetailView').style.display = 'block';
+
+        renderActiveSeriesStudio(currentActiveSeries);
+      } catch (err) {
+        alert('Failed to load series details: ' + err.message);
+      }
+    }
+
+    function closeSeriesDetailView() {
+      document.getElementById('seriesStudioDetailView').style.display = 'none';
+      document.getElementById('seriesLibraryContainer').style.display = 'block';
+      loadSeriesStudio();
+    }
+
+    function renderActiveSeriesStudio(s) {
+      document.getElementById('activeSeriesTitle').textContent = s.title;
+      const badge = document.getElementById('activeSeriesBadge');
+      badge.className = `series-badge ${s.generation_mode || 'auto'}`;
+      badge.textContent = (s.generation_mode || 'AUTO').toUpperCase();
+
+      document.getElementById('activeSeriesStatus').textContent = s.status.toUpperCase();
+
+      // Render Narrative Arc
+      const arc = s.story_arc || {};
+      document.getElementById('arcBeginningText').textContent = arc.beginning ? arc.beginning.substring(0, 110) + '...' : 'Status quo setup...';
+      document.getElementById('arcConflictText').textContent = arc.conflict_or_central_question ? arc.conflict_or_central_question.substring(0, 110) + '...' : 'Core tension...';
+      document.getElementById('arcTurningPointText').textContent = arc.turning_point ? arc.turning_point.substring(0, 110) + '...' : 'Dramatic shift...';
+      document.getElementById('arcResolutionText').textContent = arc.resolution ? arc.resolution.substring(0, 110) + '...' : 'Full payoff...';
+
+      // Series Memory
+      const mem = s.series_memory || {};
+      const memText = mem.current_tension || (mem.unresolved_questions && mem.unresolved_questions.length > 0 ? `Unresolved: ${mem.unresolved_questions[0]}` : 'Continuity coherent.');
+      document.getElementById('seriesMemoryTensionText').textContent = memText;
+
+      const unrenderedCount = (s.episodes || []).filter(e => e.render_status !== 'ready').length;
+      document.getElementById('unrenderedCountBadge').textContent = unrenderedCount;
+
+      renderVisualTimeline(s);
+      renderEpisodesEditorList(s);
+    }
+
+    function renderVisualTimeline(s) {
+      const flow = document.getElementById('visualTimelineFlow');
+      const eps = s.episodes || [];
+      if (!flow) return;
+
+      flow.innerHTML = eps.map((ep, idx) => {
+        const isFinal = (idx === eps.length - 1);
+        const isReady = ep.render_status === 'ready';
+        const cliffScore = ep.cliffhanger_score || 80;
+
+        let bridgeHtml = '';
+        if (!isFinal) {
+          bridgeHtml = `
+            <div class="timeline-bridge">
+              <span class="cliffhanger-pill" title="${ep.cliffhanger_text || 'Cliffhanger'}">
+                ⚡ ${ep.cliffhanger_type || 'Cliffhanger'} (${cliffScore})
+              </span>
+              <div class="timeline-arrow"></div>
+            </div>
+          `;
+        }
+
+        return `
+          <div class="timeline-node ${isFinal ? 'final' : ''}" onclick="scrollToEpisodeCard(${ep.id})">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+              <strong style="color: ${isFinal ? '#34d399' : 'var(--primary)'}; font-size: 0.85rem;">Part ${ep.episode_number} ${isFinal ? '[FINAL]' : ''}</strong>
+              <span class="badge" style="font-size: 0.65rem; padding: 0.1rem 0.4rem; ${isReady ? 'background: rgba(52, 211, 153, 0.2); color: #34d399;' : ''}">${isReady ? 'RENDERED' : 'PENDING'}</span>
+            </div>
+            <div style="font-size: 0.78rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${ep.title}</div>
+            <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.25rem;">${ep.start_time.toFixed(1)}s → ${ep.end_time.toFixed(1)}s (${ep.duration.toFixed(1)}s)</div>
+          </div>
+          ${bridgeHtml}
+        `;
+      }).join('');
+    }
+
+    function renderEpisodesEditorList(s) {
+      const list = document.getElementById('activeEpisodesList');
+      const eps = s.episodes || [];
+      if (!list) return;
+
+      list.innerHTML = eps.map((ep, idx) => {
+        const isFinal = (idx === eps.length - 1);
+        const isReady = (ep.render_status === 'ready' && ep.rendered_video_path);
+
+        return `
+          <div class="episode-editor-card ${isFinal ? 'final' : ''}" id="epCard_${ep.id}">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span style="font-size: 1.1rem; font-weight: 800; color: ${isFinal ? '#34d399' : 'var(--primary)'};">Part ${ep.episode_number}</span>
+                <input type="text" id="epTitle_${ep.id}" class="form-input" style="font-weight: 700; font-size: 0.95rem; width: 280px;" value="${ep.title}">
+                ${isFinal ? '<span class="badge" style="background: rgba(52,211,153,0.2); color: #34d399;">Story Resolution</span>' : ''}
+              </div>
+              <div style="display: flex; align-items: center; gap: 0.6rem;">
+                <span style="font-size: 0.78rem; color: var(--text-dim);">Quality:</span>
+                <span class="badge" style="background: rgba(163, 230, 53, 0.15); color: var(--primary); font-weight: 800;">${ep.quality_score || 85}/100</span>
+                <span class="badge" style="${isReady ? 'background: rgba(52, 211, 153, 0.2); color: #34d399;' : ''}">${ep.render_status.toUpperCase()}</span>
+              </div>
+            </div>
+
+            <!-- Hook & Timing -->
+            <div class="grid-2" style="gap: 1rem;">
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                  <label class="form-label" style="margin: 0;">Opening Hook (First 1-3s)</label>
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.15rem 0.45rem;" onclick="regenerateEpisodeHook(${ep.id})">✨ Regenerate Hook</button>
+                </div>
+                <input type="text" id="epHook_${ep.id}" class="form-input" value="${ep.opening_hook || ''}">
+              </div>
+              <div>
+                <label class="form-label">Clip Timestamps (Source Video Alignment)</label>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                  <input type="number" id="epStart_${ep.id}" class="form-input" value="${ep.start_time.toFixed(1)}" step="0.5" style="width: 100px;">
+                  <span style="color: var(--text-dim);">to</span>
+                  <input type="number" id="epEnd_${ep.id}" class="form-input" value="${ep.end_time.toFixed(1)}" step="0.5" style="width: 100px;">
+                  <span style="color: var(--text-dim); font-size: 0.8rem;">(${ep.duration.toFixed(1)}s)</span>
+                  <button class="btn-secondary" style="font-size: 0.72rem; padding: 0.4rem 0.65rem;" onclick="saveEpisodeEdits(${ep.id})">💾 Save</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cliffhanger Intelligence Card -->
+            <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.85rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                  <span style="font-size: 0.82rem; font-weight: 700; color: #fff;">${isFinal ? '🏆 Final Story Resolution' : '⚡ Cliffhanger Ending'}</span>
+                  <span class="cliffhanger-pill" style="max-width: 200px;">${ep.cliffhanger_type || 'Curiosity Gap'} (${ep.cliffhanger_score || 80}/100)</span>
+                </div>
+                ${!isFinal ? `<button class="btn-secondary" style="font-size: 0.72rem; padding: 0.15rem 0.45rem;" onclick="regenerateEpisodeCliffhanger(${ep.id})">🧠 Re-evaluate Cliffhanger</button>` : ''}
+              </div>
+              <textarea id="epCliff_${ep.id}" class="form-input" rows="2" style="font-size: 0.82rem; resize: vertical;">${ep.cliffhanger_text || ''}</textarea>
+              ${!isFinal ? `
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+                  <span style="font-size: 0.75rem; color: var(--text-dim); flex-shrink: 0;">Next Episode Teaser:</span>
+                  <input type="text" id="epTeaser_${ep.id}" class="form-input" style="font-size: 0.78rem;" value="${ep.next_teaser || ''}">
+                </div>
+              ` : ''}
+            </div>
+
+            <!-- Operations Bar -->
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem;">
+              <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+                <button class="btn-primary" style="font-size: 0.8rem; padding: 0.4rem 0.85rem;" onclick="renderSingleEpisode(${ep.id})">
+                  ${isReady ? '🔄 Re-render 9:16 Short' : '▶ Render 9:16 Short'}
+                </button>
+                ${isReady ? `
+                  <button class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.85rem;" onclick="previewEpisodeVideo('${ep.rendered_video_path}', 'Part ${ep.episode_number}: ${ep.title}')">
+                    👁 Preview 9:16 Short
+                  </button>
+                  <a href="/${ep.rendered_video_path}" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.85rem; text-decoration: none;">
+                    ⬇ Download Short
+                  </a>
+                ` : ''}
+              </div>
+              <div style="display: flex; gap: 0.4rem; align-items: center;">
+                <button class="btn-secondary" style="font-size: 0.75rem;" onclick="splitEpisodePrompt(${ep.id}, ${ep.start_time}, ${ep.end_time})">✂ Split</button>
+                ${idx < eps.length - 1 ? `<button class="btn-secondary" style="font-size: 0.75rem;" onclick="mergeEpisodePrompt(${ep.id}, ${eps[idx + 1].id})">🔗 Merge Next</button>` : ''}
+                ${eps.length > 2 ? `<button class="btn-danger" style="font-size: 0.75rem; background: rgba(244, 63, 94, 0.12); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.3);" onclick="deleteEpisodePrompt(${ep.id})">🗑</button>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function scrollToEpisodeCard(epId) {
+      const card = document.getElementById(`epCard_${epId}`);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.style.borderColor = 'var(--primary)';
+        setTimeout(() => { card.style.borderColor = 'var(--border)'; }, 1500);
+      }
+    }
+
+    async function saveEpisodeEdits(epId) {
+      const title = document.getElementById(`epTitle_${epId}`)?.value;
+      const hook = document.getElementById(`epHook_${epId}`)?.value;
+      const startT = parseFloat(document.getElementById(`epStart_${epId}`)?.value || '0');
+      const endT = parseFloat(document.getElementById(`epEnd_${epId}`)?.value || '30');
+      const cliff = document.getElementById(`epCliff_${epId}`)?.value;
+      const teaser = document.getElementById(`epTeaser_${epId}`)?.value;
+
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/episodes/${epId}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: title,
+            opening_hook: hook,
+            start_time: startT,
+            end_time: endT,
+            cliffhanger_text: cliff,
+            next_teaser: teaser
+          })
+        });
+        if (!res.ok) throw new Error('Update failed');
+        openSeriesDetails(currentActiveSeries.id);
+      } catch (err) {
+        alert('Failed to save episode edits: ' + err.message);
+      }
+    }
+
+    async function regenerateEpisodeHook(epId) {
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/episodes/${epId}/regenerate-hook`, {
+          method: 'POST'
+        });
+        if (!res.ok) throw new Error('Failed to regenerate hook');
+        const data = await res.json();
+        const input = document.getElementById(`epHook_${epId}`);
+        if (input) input.value = data.opening_hook;
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function regenerateEpisodeCliffhanger(epId) {
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/episodes/${epId}/regenerate-cliffhanger`, {
+          method: 'POST'
+        });
+        if (!res.ok) throw new Error('Failed to re-evaluate cliffhanger');
+        const data = await res.json();
+        const input = document.getElementById(`epCliff_${epId}`);
+        if (input) input.value = data.cliffhanger_text;
+        openSeriesDetails(currentActiveSeries.id);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function renderSingleEpisode(epId) {
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/render-episode/${epId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ crop_mode: 'smart_face', theme: 'hormozi_yellow' })
+        });
+        if (!res.ok) throw new Error('Render failed');
+        alert('Rendering started in background. The status will update automatically upon completion.');
+        setTimeout(() => openSeriesDetails(currentActiveSeries.id), 2500);
+      } catch (err) {
+        alert('Failed to start render: ' + err.message);
+      }
+    }
+
+    async function batchRenderActiveSeries() {
+      if (!currentActiveSeries) return;
+      if (!confirm(`Batch render all ${currentActiveSeries.episode_count} episodes with face tracking and dynamic subtitles?`)) return;
+
+      const btn = document.getElementById('btnBatchRenderActive');
+      btn.disabled = true;
+      btn.textContent = '⏳ Batch Rendering...';
+
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/batch-render`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ crop_mode: 'smart_face', theme: 'hormozi_yellow' })
+        });
+        if (!res.ok) throw new Error('Batch render failed');
+        alert('Batch rendering initiated for all episodes. Telemetry will sync continuously.');
+        setTimeout(() => openSeriesDetails(currentActiveSeries.id), 3000);
+      } catch (err) {
+        alert('Batch render failed: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '▶ Batch Render All';
+      }
+    }
+
+    async function exportActiveSeriesPackage() {
+      if (!currentActiveSeries) return;
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/export`);
+        const payload = await res.json();
+        const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(payload, null, 2));
+        const dlAnchor = document.createElement('a');
+        dlAnchor.setAttribute('href', dataStr);
+        dlAnchor.setAttribute('download', `${currentActiveSeries.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_series_package.json`);
+        document.body.appendChild(dlAnchor);
+        dlAnchor.click();
+        dlAnchor.remove();
+      } catch (err) {
+        alert('Export failed: ' + err.message);
+      }
+    }
+
+    async function deleteActiveSeries() {
+      if (!currentActiveSeries) return;
+      if (!confirm(`Permanently delete the entire series "${currentActiveSeries.title}"?`)) return;
+
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        closeSeriesDetailView();
+      } catch (err) {
+        alert('Failed to delete series: ' + err.message);
+      }
+    }
+
+    async function splitEpisodePrompt(epId, startT, endT) {
+      const mid = ((startT + endT) / 2).toFixed(1);
+      const splitTimeStr = prompt(`Enter split timestamp in seconds (between ${startT.toFixed(1)}s and ${endT.toFixed(1)}s):`, mid);
+      if (!splitTimeStr) return;
+      const splitTime = parseFloat(splitTimeStr);
+      if (isNaN(splitTime) || splitTime <= startT || splitTime >= endT) {
+        alert('Invalid split timestamp.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/episodes/${epId}/split`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ split_time: splitTime })
+        });
+        if (!res.ok) throw new Error('Split failed');
+        openSeriesDetails(currentActiveSeries.id);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function mergeEpisodePrompt(ep1Id, ep2Id) {
+      if (!confirm('Merge this episode with the next episode into a single longer video?')) return;
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/episodes/merge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ep1_id: ep1Id, ep2_id: ep2Id })
+        });
+        if (!res.ok) throw new Error('Merge failed');
+        openSeriesDetails(currentActiveSeries.id);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function deleteEpisodePrompt(epId) {
+      if (!confirm('Remove this episode from the series and renumber the rest?')) return;
+      try {
+        const res = await fetch(`/api/series/${currentActiveSeries.id}/episodes/${epId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        openSeriesDetails(currentActiveSeries.id);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function regenerateActiveSeriesPrompt() {
+      if (!currentActiveSeries) return;
+      if (!confirm('Regenerate entire story arc, boundaries, hooks, and cliffhangers from source video?')) return;
+      try {
+        const res = await fetch('/api/series/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_id: currentActiveSeries.job_id,
+            account_id: currentActiveSeries.account_id,
+            generation_mode: currentActiveSeries.generation_mode || 'auto'
+          })
+        });
+        if (!res.ok) throw new Error('Regeneration failed');
+        const newSeries = await res.json();
+        openSeriesDetails(newSeries.id);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    function previewEpisodeVideo(videoPath, title) {
+      const modal = document.getElementById('episodePreviewModal');
+      const video = document.getElementById('previewModalVideo');
+      const modalTitle = document.getElementById('previewModalTitle');
+      if (modal && video) {
+        modalTitle.textContent = title || 'Episode Preview';
+        video.src = `/${videoPath}`;
+        video.play().catch(() => {});
+        modal.style.display = 'flex';
+      }
+    }
+
+    function closeEpisodePreviewModal() {
+      const modal = document.getElementById('episodePreviewModal');
+      const video = document.getElementById('previewModalVideo');
+      if (modal && video) {
+        video.pause();
+        video.src = '';
+        modal.style.display = 'none';
+      }
+    }
+
+    // =====================================================================
+    // --- CLIENT-SIDE JS: AI METADATA STUDIO ---
+    // =====================================================================
+
+    let activeMetadataCache = null;
+    let currentMetadataPlatform = 'youtube';
+
+    async function loadMetadataStudio() {
+      try {
+        const select = document.getElementById('metaTargetSelect');
+        if (!select) return;
+
+        // Fetch rendered shorts and series episodes
+        const [shortsRes, seriesRes] = await Promise.all([
+          fetch('/api/renders?limit=100').then(r => r.json()).catch(() => ({ renders: [] })),
+          fetch('/api/series?limit=50').then(r => r.json()).catch(() => ({ series: [] }))
+        ]);
+
+        const prevVal = select.value;
+        let html = '<option value="">-- Choose Short or Series Episode --</option>';
+
+        const rendersList = (shortsRes.renders || shortsRes.shorts || []);
+        if (rendersList.length > 0) {
+          html += '<optgroup label="🎬 Viral 9:16 Shorts">';
+          rendersList.forEach(s => {
+            html += `<option value="short:${s.id}">Short #${s.id} — ${s.title || 'Viral Clip'}</option>`;
+          });
+          html += '</optgroup>';
+        }
+
+        if (seriesRes.series && seriesRes.series.length > 0) {
+          html += '<optgroup label="📺 Cliffhanger Series Episodes">';
+          seriesRes.series.forEach(ser => {
+            if (ser.episodes && ser.episodes.length > 0) {
+              ser.episodes.forEach(ep => {
+                html += `<option value="episode:${ep.id}">${ser.title} [Part ${ep.episode_number}] — ${ep.title}</option>`;
+              });
+            }
+          });
+          html += '</optgroup>';
+        }
+
+        select.innerHTML = html;
+        if (prevVal && [...select.options].some(o => o.value === prevVal)) {
+          select.value = prevVal;
+        } else if (select.options.length > 1) {
+          select.selectedIndex = 1;
+        }
+        await onMetadataTargetChanged();
+      } catch (err) {
+        console.error('Failed to load Metadata Studio targets:', err);
+      }
+    }
+
+    async function onMetadataTargetChanged() {
+      const select = document.getElementById('metaTargetSelect');
+      if (!select || !select.value) return;
+      const [targetType, targetId] = select.value.split(':');
+      try {
+        const res = await fetch(`/api/metadata/${targetType}/${targetId}`);
+        const data = await res.json();
+        if (data.success && data.metadata) {
+          activeMetadataCache = data.metadata;
+          populateMetadataFields(data.metadata);
+        }
+      } catch (err) {
+        console.error('Error fetching metadata:', err);
+      }
+    }
+
+    function populateMetadataFields(meta) {
+      if (!meta) return;
+
+      // Niche selector
+      const nicheSelect = document.getElementById('metaNicheSelect');
+      if (nicheSelect && meta.niche) nicheSelect.value = meta.niche;
+
+      // Quality score
+      const qScore = meta.quality_score || (meta.quality ? meta.quality.overall_score : 88);
+      const scoreEl = document.getElementById('metaQualityScoreText');
+      const gaugeEl = document.getElementById('metaQualityGauge');
+      const statusEl = document.getElementById('metaQualityStatusText');
+      if (scoreEl) scoreEl.textContent = `${qScore} / 100`;
+      if (gaugeEl) {
+        gaugeEl.textContent = `${qScore}`;
+        gaugeEl.style.color = qScore >= 85 ? 'var(--primary)' : (qScore >= 70 ? '#f59e0b' : '#ef4444');
+      }
+      if (statusEl) {
+        statusEl.textContent = qScore >= 85 ? '🌟 High-CTR SEO Verified' : 'Needs Optimization';
+      }
+
+      // Title variations
+      const tv = meta.title_variations || {};
+      if (document.getElementById('textTitleCuriosity')) document.getElementById('textTitleCuriosity').textContent = tv.curiosity_driven || meta.title;
+      if (document.getElementById('textTitleSEO')) document.getElementById('textTitleSEO').textContent = tv.seo_focused || meta.title;
+      if (document.getElementById('textTitleEmotional')) document.getElementById('textTitleEmotional').textContent = tv.emotional || meta.title;
+      if (document.getElementById('textTitleBold')) document.getElementById('textTitleBold').textContent = tv.bold_attention || meta.title;
+
+      // YouTube
+      const yt = meta.youtube || {};
+      if (document.getElementById('metaYtTitle')) document.getElementById('metaYtTitle').value = yt.title || meta.title || '';
+      if (document.getElementById('metaYtDesc')) document.getElementById('metaYtDesc').value = yt.description || '';
+      if (document.getElementById('metaYtTags')) document.getElementById('metaYtTags').value = (yt.tags || []).join(', ');
+      if (document.getElementById('metaYtCategory')) document.getElementById('metaYtCategory').value = yt.category || 'People & Blogs';
+      if (document.getElementById('metaYtPinned')) document.getElementById('metaYtPinned').value = yt.pinned_comment || '';
+
+      // Instagram
+      const ig = meta.instagram || {};
+      if (document.getElementById('metaIgHook')) document.getElementById('metaIgHook').value = ig.first_line_hook || '';
+      if (document.getElementById('metaIgCaption')) document.getElementById('metaIgCaption').value = ig.caption || '';
+      if (document.getElementById('metaIgHashtags')) document.getElementById('metaIgHashtags').value = (ig.hashtags || []).join(' ');
+      if (document.getElementById('metaIgPinned')) document.getElementById('metaIgPinned').value = ig.pinned_comment || '';
+
+      // TikTok
+      const tt = meta.tiktok || {};
+      if (document.getElementById('metaTtCaption')) document.getElementById('metaTtCaption').value = tt.caption || '';
+      if (document.getElementById('metaTtKeywords')) document.getElementById('metaTtKeywords').value = (tt.search_keywords || []).join(', ');
+
+      updateMetaCounters();
+    }
+
+    function switchMetadataPlatform(platform) {
+      currentMetadataPlatform = platform;
+      document.querySelectorAll('.platform-tab-btn').forEach(btn => btn.classList.remove('active'));
+      const activeBtn = document.getElementById(platform === 'youtube' ? 'tabBtnYT' : (platform === 'instagram' ? 'tabBtnIG' : 'tabBtnTT'));
+      if (activeBtn) activeBtn.classList.add('active');
+
+      document.getElementById('metaPanelYT').style.display = platform === 'youtube' ? 'block' : 'none';
+      document.getElementById('metaPanelIG').style.display = platform === 'instagram' ? 'block' : 'none';
+      document.getElementById('metaPanelTT').style.display = platform === 'tiktok' ? 'block' : 'none';
+
+      const badge = document.getElementById('mockupPlatformBadge');
+      if (badge) {
+        if (platform === 'youtube') {
+          badge.textContent = 'YouTube Shorts';
+          badge.style.background = 'rgba(239, 68, 68, 0.2)';
+          badge.style.color = '#ef4444';
+        } else if (platform === 'instagram') {
+          badge.textContent = 'Instagram Reel';
+          badge.style.background = 'rgba(225, 48, 108, 0.2)';
+          badge.style.color = '#e1306c';
+        } else {
+          badge.textContent = 'TikTok Video';
+          badge.style.background = 'rgba(0, 242, 254, 0.2)';
+          badge.style.color = '#00f2fe';
+        }
+      }
+      updateMetaCounters();
+    }
+
+    function applyTitleVariation(varType) {
+      if (!activeMetadataCache || !activeMetadataCache.title_variations) return;
+      const title = activeMetadataCache.title_variations[varType] || '';
+      if (!title) return;
+
+      const ytTitle = document.getElementById('metaYtTitle');
+      if (ytTitle) ytTitle.value = title;
+      const igHook = document.getElementById('metaIgHook');
+      if (igHook) igHook.value = `🔥 ${title}`;
+
+      document.querySelectorAll('.variation-chip').forEach(c => c.classList.remove('active'));
+      const activeChip = document.getElementById(
+        varType === 'curiosity_driven' ? 'chipTitleCuriosity' :
+        (varType === 'seo_focused' ? 'chipTitleSEO' :
+        (varType === 'emotional' ? 'chipTitleEmotional' : 'chipTitleBold'))
+      );
+      if (activeChip) activeChip.classList.add('active');
+      updateMetaCounters();
+    }
+
+    async function regenerateTitleVariations() {
+      await regenerateSpecificField('youtube', 'titles');
+    }
+
+    function updateMetaCounters() {
+      // YouTube Title
+      const ytTitle = document.getElementById('metaYtTitle')?.value || '';
+      const ytTitleCount = document.getElementById('ytTitleCount');
+      if (ytTitleCount) {
+        ytTitleCount.textContent = `${ytTitle.length} / 100`;
+        ytTitleCount.style.color = ytTitle.length > 100 ? '#ef4444' : 'var(--text-dim)';
+      }
+
+      // YouTube Desc
+      const ytDesc = document.getElementById('metaYtDesc')?.value || '';
+      const ytDescCount = document.getElementById('ytDescCount');
+      if (ytDescCount) {
+        ytDescCount.textContent = `${ytDesc.length} / 5000`;
+        ytDescCount.style.color = ytDesc.length > 5000 ? '#ef4444' : 'var(--text-dim)';
+      }
+
+      // YouTube Tags
+      const ytTags = document.getElementById('metaYtTags')?.value || '';
+      const ytTagsCount = document.getElementById('ytTagsCount');
+      if (ytTagsCount) {
+        ytTagsCount.textContent = `${ytTags.length} / 500`;
+        ytTagsCount.style.color = ytTags.length > 500 ? '#ef4444' : 'var(--text-dim)';
+      }
+
+      // Instagram Hook
+      const igHook = document.getElementById('metaIgHook')?.value || '';
+      const igHookCount = document.getElementById('igHookCount');
+      if (igHookCount) {
+        igHookCount.textContent = `${igHook.length} / 85`;
+        igHookCount.style.color = igHook.length > 85 ? '#ef4444' : 'var(--text-dim)';
+      }
+
+      // Instagram Caption
+      const igCaption = document.getElementById('metaIgCaption')?.value || '';
+      const igCaptionCount = document.getElementById('igCaptionCount');
+      if (igCaptionCount) {
+        igCaptionCount.textContent = `${igCaption.length} / 2200`;
+        igCaptionCount.style.color = igCaption.length > 2200 ? '#ef4444' : 'var(--text-dim)';
+      }
+
+      // Instagram Tags
+      const igTags = (document.getElementById('metaIgHashtags')?.value || '').trim().split(/\\s+/).filter(Boolean);
+      const igTagsCount = document.getElementById('igTagsCount');
+      if (igTagsCount) {
+        igTagsCount.textContent = `${igTags.length} / 30 tags`;
+        igTagsCount.style.color = igTags.length > 30 ? '#ef4444' : 'var(--text-dim)';
+      }
+
+      // TikTok Caption
+      const ttCaption = document.getElementById('metaTtCaption')?.value || '';
+      const ttCaptionCount = document.getElementById('ttCaptionCount');
+      if (ttCaptionCount) {
+        ttCaptionCount.textContent = `${ttCaption.length} / 2200`;
+        ttCaptionCount.style.color = ttCaption.length > 2200 ? '#ef4444' : 'var(--text-dim)';
+      }
+
+      // Update Live Mockup Area
+      const mockupCaptionEl = document.getElementById('mockupCaption');
+      if (mockupCaptionEl) {
+        if (currentMetadataPlatform === 'youtube') {
+          mockupCaptionEl.innerHTML = `<strong>${escapeHtml(ytTitle)}</strong><br><span style="color:#aaa; font-size:0.65rem;">${escapeHtml(ytDesc.slice(0, 140))}...</span>`;
+        } else if (currentMetadataPlatform === 'instagram') {
+          mockupCaptionEl.innerHTML = `<strong>${escapeHtml(igHook)}</strong><br>${escapeHtml(igCaption.slice(0, 160)).split('\\n').join('<br>')}`;
+        } else {
+          mockupCaptionEl.innerHTML = `${escapeHtml(ttCaption.slice(0, 180)).split('\\n').join('<br>')}`;
+        }
+      }
+    }
+
+    async function generateActiveMetadata() {
+      const select = document.getElementById('metaTargetSelect');
+      if (!select || !select.value) {
+        alert('Please select a video short or series episode first.');
+        return;
+      }
+      const [targetType, targetId] = select.value.split(':');
+      const niche = document.getElementById('metaNicheSelect')?.value || 'Motivation';
+
+      try {
+        const res = await fetch('/api/metadata/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_type: targetType, target_id: targetId, niche })
+        });
+        const data = await res.json();
+        if (data.success && data.metadata) {
+          activeMetadataCache = data.metadata;
+          populateMetadataFields(data.metadata);
+          alert('AI Metadata successfully generated across YouTube, Instagram, and TikTok!');
+        }
+      } catch (err) {
+        alert('Failed to generate metadata: ' + err);
+      }
+    }
+
+    async function saveActiveMetadata() {
+      const select = document.getElementById('metaTargetSelect');
+      if (!select || !select.value) return;
+      const [targetType, targetId] = select.value.split(':');
+      const niche = document.getElementById('metaNicheSelect')?.value || 'Motivation';
+
+      const payload = {
+        target_type: targetType,
+        target_id: targetId,
+        title: document.getElementById('metaYtTitle')?.value || 'Untitled',
+        niche: niche,
+        youtube: {
+          title: document.getElementById('metaYtTitle')?.value || '',
+          description: document.getElementById('metaYtDesc')?.value || '',
+          tags: (document.getElementById('metaYtTags')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+          category: document.getElementById('metaYtCategory')?.value || 'People & Blogs',
+          pinned_comment: document.getElementById('metaYtPinned')?.value || ''
+        },
+        instagram: {
+          first_line_hook: document.getElementById('metaIgHook')?.value || '',
+          caption: document.getElementById('metaIgCaption')?.value || '',
+          hashtags: (document.getElementById('metaIgHashtags')?.value || '').split(/\\s+/).filter(Boolean),
+          pinned_comment: document.getElementById('metaIgPinned')?.value || ''
+        },
+        tiktok: {
+          caption: document.getElementById('metaTtCaption')?.value || '',
+          search_keywords: (document.getElementById('metaTtKeywords')?.value || '').split(',').map(s => s.trim()).filter(Boolean)
+        },
+        quality_score: 92
+      };
+
+      try {
+        const res = await fetch(`/api/metadata/${targetType}/${targetId}/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Metadata saved persistently to database!');
+        }
+      } catch (err) {
+        alert('Error saving metadata: ' + err);
+      }
+    }
+
+    function copyFieldValue(fieldId) {
+      const el = document.getElementById(fieldId);
+      if (!el) return;
+      navigator.clipboard.writeText(el.value).then(() => {
+        alert('Field copied to clipboard!');
+      });
+    }
+
+    function copyAllActiveMetadata() {
+      const ytTitle = document.getElementById('metaYtTitle')?.value || '';
+      const ytDesc = document.getElementById('metaYtDesc')?.value || '';
+      const igCaption = document.getElementById('metaIgCaption')?.value || '';
+      const ttCaption = document.getElementById('metaTtCaption')?.value || '';
+
+      const fullPackage = `=== YOUTUBE ===\nTITLE:\n${ytTitle}\n\nDESCRIPTION:\n${ytDesc}\n\n=== INSTAGRAM ===\nCAPTION:\n${igCaption}\n\n=== TIKTOK ===\nCAPTION:\n${ttCaption}`;
+      navigator.clipboard.writeText(fullPackage).then(() => {
+        alert('Complete multi-platform metadata copied to clipboard!');
+      });
+    }
+
+    async function regenerateSpecificField(platform, fieldName) {
+      const select = document.getElementById('metaTargetSelect');
+      if (!select || !select.value) return;
+      const [targetType, targetId] = select.value.split(':');
+
+      try {
+        const res = await fetch(`/api/metadata/${targetType}/${targetId}/regenerate-field`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_type: targetType, target_id: targetId, platform, field_name: fieldName })
+        });
+        const data = await res.json();
+        if (data.success && data.metadata) {
+          activeMetadataCache = data.metadata;
+          populateMetadataFields(data.metadata);
+        }
+      } catch (err) {
+        alert('Regeneration failed: ' + err);
+      }
+    }
+
+    // =====================================================================
+    // --- CLIENT-SIDE JS: AI THUMBNAIL STUDIO ---
+    // =====================================================================
+
+    let activeThumbnailAssetsCache = [];
+    let isGridPreviewActive = false;
+
+    async function loadThumbnailStudio() {
+      try {
+        const select = document.getElementById('thumbTargetSelect');
+        if (!select) return;
+
+        const [shortsRes, seriesRes] = await Promise.all([
+          fetch('/api/renders?limit=100').then(r => r.json()).catch(() => ({ renders: [] })),
+          fetch('/api/series?limit=50').then(r => r.json()).catch(() => ({ series: [] }))
+        ]);
+
+        const prevVal = select.value;
+        let html = '<option value="">-- Choose Short or Series Episode --</option>';
+
+        const rendersList = (shortsRes.renders || shortsRes.shorts || []);
+        if (rendersList.length > 0) {
+          html += '<optgroup label="🎬 Viral 9:16 Shorts">';
+          rendersList.forEach(s => {
+            html += `<option value="short:${s.id}">Short #${s.id} — ${s.title || 'Viral Clip'}</option>`;
+          });
+          html += '</optgroup>';
+        }
+
+        if (seriesRes.series && seriesRes.series.length > 0) {
+          html += '<optgroup label="📺 Cliffhanger Series Episodes">';
+          seriesRes.series.forEach(ser => {
+            if (ser.episodes && ser.episodes.length > 0) {
+              ser.episodes.forEach(ep => {
+                html += `<option value="episode:${ep.id}">${ser.title} [Part ${ep.episode_number}] — ${ep.title}</option>`;
+              });
+            }
+          });
+          html += '</optgroup>';
+        }
+
+        select.innerHTML = html;
+        if (prevVal && [...select.options].some(o => o.value === prevVal)) {
+          select.value = prevVal;
+        } else if (select.options.length > 1) {
+          select.selectedIndex = 1;
+        }
+        await onThumbnailTargetChanged();
+      } catch (err) {
+        console.error('Failed to load Thumbnail Studio targets:', err);
+      }
+    }
+
+    async function onThumbnailTargetChanged() {
+      const select = document.getElementById('thumbTargetSelect');
+      if (!select || !select.value) return;
+      const [targetType, targetId] = select.value.split(':');
+
+      try {
+        const [thumbRes, framesRes] = await Promise.all([
+          fetch(`/api/thumbnails/${targetType}/${targetId}`).then(r => r.json()).catch(() => ({ thumbnails: [] })),
+          fetch('/api/thumbnails/extract-frames', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_type: targetType, target_id: targetId })
+          }).then(r => r.json()).catch(() => ({ candidates: [] }))
+        ]);
+
+        // Render Frame Scrubber
+        renderCandidateFrames(framesRes.candidates || []);
+
+        // Render Thumbnail Variations
+        activeThumbnailAssetsCache = thumbRes.thumbnails || [];
+        renderThumbnailVariations(activeThumbnailAssetsCache);
+      } catch (err) {
+        console.error('Error fetching thumbnail assets:', err);
+      }
+    }
+
+    function renderCandidateFrames(candidates) {
+      const scrubber = document.getElementById('thumbFrameScrubber');
+      if (!scrubber) return;
+      if (!candidates || candidates.length === 0) {
+        scrubber.innerHTML = '<div style="color:var(--text-dim); padding:1rem; font-size:0.8rem;">No frames extracted yet. Click Re-scan.</div>';
+        return;
+      }
+      scrubber.innerHTML = candidates.map((c, i) => `
+        <div class="frame-scrubber-item ${i === 0 ? 'active' : ''}" onclick="selectScrubberFrame(this, ${c.timestamp_sec})">
+          <div style="font-size:0.65rem; color:#fff; position:absolute; top:3px; left:4px; background:rgba(0,0,0,0.7); padding:1px 3px; border-radius:3px;">
+            ${c.timestamp_sec.toFixed(1)}s
+          </div>
+          <div style="font-size:0.62rem; color:${c.has_face ? '#34d399' : '#f59e0b'}; position:absolute; bottom:3px; right:4px; background:rgba(0,0,0,0.7); padding:1px 3px; border-radius:3px;">
+            ${c.has_face ? '👤 Face' : '🏞️ Scene'}
+          </div>
+          <div style="width:100%; height:62px; background:#222; display:flex; align-items:center; justify-content:center; color:#555; font-size:0.7rem;">
+            Frame ${i+1}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function selectScrubberFrame(el, timestamp) {
+      document.querySelectorAll('.frame-scrubber-item').forEach(item => item.classList.remove('active'));
+      el.classList.add('active');
+    }
+
+    function renderThumbnailVariations(thumbnails) {
+      const gallery = document.getElementById('thumbVariationsGallery');
+      if (!gallery) return;
+
+      if (!thumbnails || thumbnails.length === 0) {
+        gallery.innerHTML = `
+          <div class="card" style="text-align: center; color: var(--text-dim); padding: 3rem 1rem; grid-column: span 3;">
+            No thumbnail variations generated yet. Click "Generate Thumbnail Variations" above.
+          </div>
+        `;
+        return;
+      }
+
+      gallery.innerHTML = thumbnails.map(t => {
+        const isSel = Boolean(t.is_selected);
+        const varTitle = t.variation_type === 'emotional' ? '❤️ Emotional Peak' : (t.variation_type === 'curiosity' ? '🔍 Curiosity Loop' : '💼 Professional Minimal');
+        const badgeColor = t.variation_type === 'emotional' ? '#fb7185' : (t.variation_type === 'curiosity' ? '#38bdf8' : '#34d399');
+        const imgUrl = `/api/thumbnails/${t.id}/image?t=${Date.now()}`;
+
+        return `
+          <div class="thumbnail-card ${isSel ? 'selected' : ''}" id="thumbCard_${t.id}">
+            <div style="position: relative; width: 100%; aspect-ratio: ${t.aspect_ratio === '16:9' ? '16/9' : '9/16'}; max-height: 440px; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+              <img src="${imgUrl}" alt="${t.headline}" style="width: 100%; height: 100%; object-fit: contain;">
+              <div class="grid-crop-indicator" style="display: ${isGridPreviewActive && t.aspect_ratio === '9:16' ? 'block' : 'none'}; position: absolute; inset: 0; margin: auto; width: 100%; aspect-ratio: 1/1; border: 2px dashed rgba(255,255,255,0.7); box-shadow: 0 0 0 9999px rgba(0,0,0,0.55); pointer-events: none;"></div>
+              ${isSel ? '<span style="position: absolute; top: 10px; right: 10px; background: var(--primary); color: #000; font-size: 0.72rem; font-weight: 800; padding: 2px 8px; border-radius: 4px;">★ ACTIVE COVER</span>' : ''}
+              <span style="position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.75); color: ${badgeColor}; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 4px;">
+                ${varTitle}
+              </span>
+            </div>
+
+            <div style="padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; flex: 1;">
+              <div style="font-size: 0.88rem; font-weight: 800; color: #fff;">${t.headline || 'HIGH IMPACT HEADLINE'}</div>
+              <div style="font-size: 0.72rem; color: var(--text-dim);">${t.aspect_ratio} • ${t.style_mode} • Frame @ ${t.source_timestamp.toFixed(1)}s</div>
+              <div style="display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem;">
+                <button class="btn-primary" style="flex: 1; font-size: 0.78rem; padding: 0.35rem 0.6rem;" onclick="selectActiveThumbnail(${t.id})">
+                  ${isSel ? '✓ Selected' : '★ Set Active Cover'}
+                </button>
+                <button class="btn-secondary" style="font-size: 0.78rem; padding: 0.35rem 0.6rem;" onclick="downloadThumbnailAsset(${t.id})">
+                  ⬇
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function generateActiveThumbnails() {
+      const select = document.getElementById('thumbTargetSelect');
+      if (!select || !select.value) {
+        alert('Please select a video short or series episode first.');
+        return;
+      }
+      const [targetType, targetId] = select.value.split(':');
+      const ratio = document.getElementById('thumbPlatformSelect')?.value || '9:16';
+      const mode = document.getElementById('thumbModeSelect')?.value || 'auto';
+      const customHead = document.getElementById('thumbCustomHeadline')?.value || null;
+
+      try {
+        const res = await fetch('/api/thumbnails/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target_type: targetType,
+            target_id: targetId,
+            aspect_ratio: ratio,
+            style_mode: mode,
+            custom_headline: customHead
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.variations) {
+          await onThumbnailTargetChanged();
+          alert('3 High-CTR thumbnail variations generated!');
+        }
+      } catch (err) {
+        alert('Thumbnail generation failed: ' + err);
+      }
+    }
+
+    async function selectActiveThumbnail(assetId) {
+      const select = document.getElementById('thumbTargetSelect');
+      if (!select || !select.value) return;
+      const [targetType, targetId] = select.value.split(':');
+
+      try {
+        const res = await fetch(`/api/thumbnails/${assetId}/select`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ asset_id: assetId, target_type: targetType, target_id: targetId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          await onThumbnailTargetChanged();
+        }
+      } catch (err) {
+        alert('Failed to select active cover: ' + err);
+      }
+    }
+
+    function downloadThumbnailAsset(assetId) {
+      window.open(`/api/thumbnails/${assetId}/image`, '_blank');
+    }
+
+    async function extractFreshCandidateFrames() {
+      await onThumbnailTargetChanged();
+    }
+
+    function toggleInstagramGridPreview() {
+      isGridPreviewActive = !isGridPreviewActive;
+      const btn = document.getElementById('btnToggleGridCrop');
+      if (btn) btn.textContent = isGridPreviewActive ? '📐 Hide 1:1 Grid Overlay' : '📐 Toggle 1:1 Grid Preview';
+      document.querySelectorAll('.grid-crop-indicator').forEach(el => {
+        el.style.display = isGridPreviewActive ? 'block' : 'none';
+      });
+    }
+
+    function autoSuggestThumbnailHeadline() {
+      const suggestions = [
+        '99% NEVER MAKE IT',
+        'I LOST EVERYTHING',
+        'UNBELIEVABLE FINISH!',
+        'THE SECRET RULE',
+        'DO NOT WAIT',
+        'MINDSET IS EVERYTHING'
+      ];
+      const pick = suggestions[Math.floor(Math.random() * suggestions.length)];
+      const input = document.getElementById('thumbCustomHeadline');
+      if (input) input.value = pick;
+    }
+
+    // =====================================================================
+    // --- CLIENT-SIDE JS: PUBLISHING READINESS MODAL ---
+    // =====================================================================
+
+    let activeReadinessTarget = { type: 'short', id: '1' };
+
+    async function openReadinessModalForActive() {
+      const select = document.getElementById('metaTargetSelect');
+      if (!select || !select.value) {
+        alert('Please select a video short or episode first.');
+        return;
+      }
+      const [targetType, targetId] = select.value.split(':');
+      openReadinessModal(targetType, targetId);
+    }
+
+    async function openReadinessModal(targetType, targetId) {
+      activeReadinessTarget = { type: targetType, id: targetId };
+      const modal = document.getElementById('readinessModal');
+      if (modal) modal.style.display = 'flex';
+
+      try {
+        const res = await fetch(`/api/publishing/readiness/${targetType}/${targetId}`);
+        const data = await res.json();
+        if (data.success && data.report) {
+          renderReadinessReport(data.report);
+        }
+      } catch (err) {
+        console.error('Error fetching readiness report:', err);
+      }
+    }
+
+    function renderReadinessReport(report) {
+      const scoreVal = document.getElementById('readinessScoreVal');
+      const statusBadge = document.getElementById('readinessStatusBadge');
+      const checklistArea = document.getElementById('readinessChecklistArea');
+
+      if (scoreVal) scoreVal.textContent = `${report.overall_score}%`;
+      if (statusBadge) {
+        statusBadge.textContent = report.readiness_status === 'ready' ? '🟢 Ready for Publishing' : (report.readiness_status === 'needs_review' ? '🟡 Review Required' : '🔴 Incomplete');
+        statusBadge.style.color = report.readiness_status === 'ready' ? 'var(--primary)' : (report.readiness_status === 'needs_review' ? '#f59e0b' : '#ef4444');
+      }
+
+      if (checklistArea) {
+        checklistArea.innerHTML = (report.checks || []).map(chk => {
+          const isPass = chk.status === 'passed';
+          const isWarn = chk.status === 'warning';
+          const pillColor = isPass ? '#34d399' : (isWarn ? '#f59e0b' : '#ef4444');
+          const pillBg = isPass ? 'rgba(52,211,153,0.15)' : (isWarn ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)');
+          const icon = isPass ? '✓' : (isWarn ? '⚠️' : '✕');
+
+          return `
+            <div style="padding: 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 0.25rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <strong style="font-size: 0.85rem; color: #fff;">${chk.check_name}</strong>
+                <span class="readiness-pill" style="background: ${pillBg}; color: ${pillColor};">${icon} ${chk.status.toUpperCase()}</span>
+              </div>
+              <div style="font-size: 0.78rem; color: var(--text-dim);">${chk.message}</div>
+              ${chk.actionable_fix ? `<div style="font-size: 0.72rem; color: #f59e0b; margin-top: 2px;">💡 Action: ${chk.actionable_fix}</div>` : ''}
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    function closeReadinessModal() {
+      const modal = document.getElementById('readinessModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function downloadExportPackageForActive() {
+      const { type, id } = activeReadinessTarget;
+      window.open(`/api/publishing/export-package/${type}/${id}`, '_blank');
+    }
+
     // Auto-initialize on load
     window.addEventListener('DOMContentLoaded', async () => {
       document.querySelectorAll('.sidebar-nav .nav-item').forEach(item => {
@@ -5104,14 +8117,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       });
       window.addEventListener('resize', () => setMobileNav(false));
       window.addEventListener('popstate', () => {
-        switchTab(window.location.hash.slice(1) || 'overview', false);
+        const pTab = window.location.pathname.replace(/^[/]+/, '').split('/')[0];
+        switchTab(window.location.hash.slice(1) || pTab || 'overview', false);
       });
 
-      await loadAccountsList();
-      await checkAutomationStatus();
-      checkHardwareAccel();
-      const requestedTab = window.location.hash.slice(1);
+      const pathTab = window.location.pathname.replace(/^[/]+/, '').split('/')[0];
+      const requestedTab = window.location.hash.slice(1) || pathTab;
       switchTab(document.getElementById(`tab-${requestedTab}`) ? requestedTab : 'overview', false);
+
+      loadAccountsList();
+      checkAutomationStatus();
+      checkHardwareAccel();
 
       // Background telemetry sync every 5 seconds
       setInterval(() => {
@@ -5125,8 +8141,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 
 @app.get("/", response_class=HTMLResponse)
-def serve_dashboard():
+@app.get("/{tab_slug}", response_class=HTMLResponse)
+def serve_dashboard(tab_slug: str = ""):
     """Serves the main interactive dashboard."""
+    if tab_slug.startswith("api") or tab_slug.startswith("docs") or tab_slug.startswith("openapi") or tab_slug.startswith("output") or tab_slug.startswith("temp"):
+        raise HTTPException(status_code=404, detail="Not Found")
     return HTMLResponse(content=DASHBOARD_HTML)
 
 

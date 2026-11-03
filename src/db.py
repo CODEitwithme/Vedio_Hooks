@@ -324,6 +324,48 @@ def init_db():
                 FOREIGN KEY (render_id) REFERENCES rendered_shorts (id)
             )
         """)
+        # 12. Video Metadata & SEO Table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS video_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT,
+                target_type TEXT DEFAULT 'short', -- short, episode, long_form
+                target_id TEXT NOT NULL,
+                account_id TEXT DEFAULT 'acc_motivation',
+                title TEXT NOT NULL,
+                niche TEXT DEFAULT 'Motivation',
+                youtube_json TEXT,
+                instagram_json TEXT,
+                tiktok_json TEXT,
+                title_variations_json TEXT,
+                quality_score INTEGER DEFAULT 85,
+                quality_breakdown_json TEXT,
+                status TEXT DEFAULT 'draft', -- draft, approved, rejected
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 13. Thumbnail Assets & Variations Table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS thumbnail_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT,
+                target_type TEXT DEFAULT 'short', -- short, episode, long_form
+                target_id TEXT NOT NULL,
+                account_id TEXT DEFAULT 'acc_motivation',
+                aspect_ratio TEXT DEFAULT '9:16', -- 16:9, 9:16, 1:1
+                platform TEXT DEFAULT 'universal',
+                style_mode TEXT DEFAULT 'auto',   -- auto, face_focused, cinematic, custom
+                variation_type TEXT DEFAULT 'emotional', -- emotional, curiosity, professional, custom
+                headline TEXT,
+                image_path TEXT NOT NULL,
+                source_timestamp REAL DEFAULT 1.0,
+                is_selected INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
 
         # 10. Viral Hook A/B Variants Table
         conn.execute("""
@@ -341,6 +383,104 @@ def init_db():
                 rendered_video_path TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (job_id) REFERENCES jobs (id)
+            )
+        """)
+
+        # 11. AI Cliffhanger Series Engine Tables
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS series (
+                id TEXT PRIMARY KEY,
+                account_id TEXT DEFAULT 'acc_motivation',
+                job_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                main_topic TEXT,
+                main_speakers TEXT,
+                episode_count INTEGER DEFAULT 3,
+                status TEXT DEFAULT 'ready', -- draft, generating, ready, rendering, completed, failed
+                quality_score INTEGER DEFAULT 85,
+                story_arc_json TEXT,
+                series_memory_json TEXT,
+                generation_mode TEXT DEFAULT 'auto', -- auto, guided, custom
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (account_id) REFERENCES accounts (id),
+                FOREIGN KEY (job_id) REFERENCES jobs (id)
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS series_episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                series_id TEXT NOT NULL,
+                episode_number INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                opening_hook TEXT,
+                context_premise TEXT,
+                main_content TEXT,
+                payoff_text TEXT,
+                cliffhanger_text TEXT,
+                cliffhanger_type TEXT,
+                cliffhanger_score INTEGER DEFAULT 80,
+                next_teaser TEXT,
+                start_time REAL NOT NULL,
+                end_time REAL NOT NULL,
+                duration REAL NOT NULL,
+                connection_prev TEXT,
+                connection_next TEXT,
+                is_final_episode INTEGER DEFAULT 0,
+                quality_score INTEGER DEFAULT 85,
+                quality_breakdown_json TEXT,
+                word_boundaries_json TEXT,
+                rendered_video_path TEXT,
+                render_id INTEGER,
+                render_status TEXT DEFAULT 'pending', -- pending, rendering, ready, failed
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (series_id) REFERENCES series (id) ON DELETE CASCADE,
+                FOREIGN KEY (render_id) REFERENCES rendered_shorts (id)
+            )
+        """)
+
+        # 12. Video Metadata & SEO Table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS video_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT,
+                target_type TEXT DEFAULT 'short', -- short, episode, long_form
+                target_id TEXT NOT NULL,
+                account_id TEXT DEFAULT 'acc_motivation',
+                title TEXT NOT NULL,
+                niche TEXT DEFAULT 'Motivation',
+                youtube_json TEXT,
+                instagram_json TEXT,
+                tiktok_json TEXT,
+                title_variations_json TEXT,
+                quality_score INTEGER DEFAULT 85,
+                quality_breakdown_json TEXT,
+                status TEXT DEFAULT 'draft', -- draft, approved, rejected
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 13. Thumbnail Assets & Variations Table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS thumbnail_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT,
+                target_type TEXT DEFAULT 'short', -- short, episode, long_form
+                target_id TEXT NOT NULL,
+                account_id TEXT DEFAULT 'acc_motivation',
+                aspect_ratio TEXT DEFAULT '9:16', -- 16:9, 9:16, 1:1
+                platform TEXT DEFAULT 'universal',
+                style_mode TEXT DEFAULT 'auto',   -- auto, face_focused, cinematic, custom
+                variation_type TEXT DEFAULT 'emotional', -- emotional, curiosity, professional, custom
+                headline TEXT,
+                image_path TEXT NOT NULL,
+                source_timestamp REAL DEFAULT 1.0,
+                is_selected INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -864,14 +1004,12 @@ def get_interrupted_jobs() -> List[Dict[str, Any]]:
 
 
 def recover_interrupted_jobs() -> int:
-    """Automatically resets interrupted jobs to 'queued' on startup."""
-    interrupted = get_interrupted_jobs()
-    if not interrupted:
-        return 0
-
+    """Automatically resets interrupted jobs, series, and episodes on startup."""
     conn = get_db_connection()
     now = datetime.now(timezone.utc).isoformat()
     recovered_count = 0
+    interrupted = get_interrupted_jobs()
+
     with conn:
         for job in interrupted:
             job_id = job["id"]
@@ -895,6 +1033,19 @@ def recover_interrupted_jobs() -> int:
                         updated_at = ?
                     WHERE id = ?
                 """, (now, job_id))
+
+        # Also recover any series and series episodes interrupted while generating or rendering
+        conn.execute("""
+            UPDATE series
+            SET status = 'ready', updated_at = ?
+            WHERE status IN ('rendering', 'generating')
+        """, (now,))
+        conn.execute("""
+            UPDATE series_episodes
+            SET render_status = 'pending', updated_at = ?
+            WHERE render_status = 'rendering'
+        """, (now,))
+
     conn.close()
     return recovered_count
 
@@ -1188,6 +1339,38 @@ def get_database_stats(account_id: Optional[str] = None) -> Dict[str, Any]:
         cur_r = conn.execute(render_query, tuple(render_params))
         stats["total_shorts_rendered"] = cur_r.fetchone()["cnt"]
 
+        # Series counts
+        series_query = "SELECT COUNT(*) as cnt FROM series"
+        series_params = []
+        if account_id and account_id != "all":
+            series_query += " WHERE account_id = ?"
+            series_params.append(account_id)
+        cur_s = conn.execute(series_query, tuple(series_params))
+        stats["total_series"] = cur_s.fetchone()["cnt"]
+
+        ep_query = "SELECT COUNT(*) as cnt FROM series_episodes se JOIN series s ON se.series_id = s.id"
+        ep_params = []
+        if account_id and account_id != "all":
+            ep_query += " WHERE s.account_id = ?"
+            ep_params.append(account_id)
+        cur_ep = conn.execute(ep_query, tuple(ep_params))
+        stats["total_series_episodes"] = cur_ep.fetchone()["cnt"]
+
+        # Metadata & Thumbnail counts
+        meta_query = "SELECT COUNT(*) as cnt FROM video_metadata"
+        meta_params = []
+        if account_id and account_id != "all":
+            meta_query += " WHERE account_id = ?"
+            meta_params.append(account_id)
+        stats["total_metadata_records"] = conn.execute(meta_query, tuple(meta_params)).fetchone()["cnt"]
+
+        thumb_query = "SELECT COUNT(*) as cnt FROM thumbnail_assets"
+        thumb_params = []
+        if account_id and account_id != "all":
+            thumb_query += " WHERE account_id = ?"
+            thumb_params.append(account_id)
+        stats["total_thumbnail_assets"] = conn.execute(thumb_query, tuple(thumb_params)).fetchone()["cnt"]
+
         # Publishing items by status
         pub_query = "SELECT status, COUNT(*) as cnt FROM publishing_queue"
         pub_params = []
@@ -1197,6 +1380,21 @@ def get_database_stats(account_id: Optional[str] = None) -> Dict[str, Any]:
         pub_query += " GROUP BY status"
         for row in conn.execute(pub_query, tuple(pub_params)).fetchall():
             stats[f"publishing_{row['status']}"] = row["cnt"]
+
+        # Metadata & Thumbnail counts
+        meta_query = "SELECT COUNT(*) as cnt FROM video_metadata"
+        meta_params = []
+        if account_id and account_id != "all":
+            meta_query += " WHERE account_id = ?"
+            meta_params.append(account_id)
+        stats["total_metadata_records"] = conn.execute(meta_query, tuple(meta_params)).fetchone()["cnt"]
+
+        thumb_query = "SELECT COUNT(*) as cnt FROM thumbnail_assets"
+        thumb_params = []
+        if account_id and account_id != "all":
+            thumb_query += " WHERE account_id = ?"
+            thumb_params.append(account_id)
+        stats["total_thumbnail_assets"] = conn.execute(thumb_query, tuple(thumb_params)).fetchone()["cnt"]
 
     conn.close()
     return stats
@@ -1347,4 +1545,1910 @@ def update_hook_variant_render(variant_id: int, rendered_video_path: str):
             (rendered_video_path, variant_id)
         )
     conn.close()
+
+
+# =====================================================================
+# --- AI CLIFFHANGER SERIES ENGINE (SERIES & EPISODES CRUD) ---
+# =====================================================================
+
+def create_series(series_data: Dict[str, Any]) -> str:
+    """
+    Creates a new multi-episode series record and associated episodes in SQLite.
+    Returns the series ID.
+    """
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    series_id = series_data.get("id") or f"series_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+
+    # Serialize JSON fields if needed
+    story_arc = series_data.get("story_arc")
+    story_arc_json = story_arc if isinstance(story_arc, str) else (json.dumps(story_arc, ensure_ascii=False) if story_arc else None)
+
+    series_memory = series_data.get("series_memory")
+    series_memory_json = series_memory if isinstance(series_memory, str) else (json.dumps(series_memory, ensure_ascii=False) if series_memory else None)
+
+    episodes = series_data.get("episodes", [])
+    ep_count = len(episodes) if episodes else int(series_data.get("episode_count", 3))
+
+    with conn:
+        conn.execute("""
+            INSERT INTO series (
+                id, account_id, job_id, title, description, main_topic, main_speakers,
+                episode_count, status, quality_score, story_arc_json, series_memory_json,
+                generation_mode, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            series_id,
+            series_data.get("account_id", "acc_motivation"),
+            series_data.get("job_id"),
+            series_data.get("title", "Untitled Series"),
+            series_data.get("description", ""),
+            series_data.get("main_topic", "General Narrative"),
+            series_data.get("main_speakers", ""),
+            ep_count,
+            series_data.get("status", "ready"),
+            int(series_data.get("quality_score", 85)),
+            story_arc_json,
+            series_memory_json,
+            series_data.get("generation_mode", "auto"),
+            now, now
+        ))
+
+        # Insert episodes if provided
+        for ep_idx, ep in enumerate(episodes):
+            ep_num = ep.get("episode_number") or (ep_idx + 1)
+            is_final = 1 if (ep.get("is_final_episode") or ep_num == len(episodes)) else 0
+            
+            qb = ep.get("quality_breakdown")
+            qb_json = qb if isinstance(qb, str) else (json.dumps(qb, ensure_ascii=False) if qb else None)
+
+            wb = ep.get("word_boundaries")
+            wb_json = wb if isinstance(wb, str) else (json.dumps(wb, ensure_ascii=False) if wb else None)
+
+            start_t = float(ep.get("start_time", 0.0))
+            end_t = float(ep.get("end_time", start_t + 30.0))
+            dur = float(ep.get("duration") or round(end_t - start_t, 2))
+
+            conn.execute("""
+                INSERT INTO series_episodes (
+                    series_id, episode_number, title, opening_hook, context_premise,
+                    main_content, payoff_text, cliffhanger_text, cliffhanger_type,
+                    cliffhanger_score, next_teaser, start_time, end_time, duration,
+                    connection_prev, connection_next, is_final_episode, quality_score,
+                    quality_breakdown_json, word_boundaries_json, rendered_video_path,
+                    render_id, render_status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                series_id,
+                ep_num,
+                ep.get("title", f"Episode {ep_num}"),
+                ep.get("opening_hook", ""),
+                ep.get("context_premise", ""),
+                ep.get("main_content", ""),
+                ep.get("payoff_text", ""),
+                ep.get("cliffhanger_text", ""),
+                ep.get("cliffhanger_type", "curiosity_gap"),
+                int(ep.get("cliffhanger_score", 80)),
+                ep.get("next_teaser", ""),
+                start_t,
+                end_t,
+                dur,
+                ep.get("connection_prev", ""),
+                ep.get("connection_next", ""),
+                is_final,
+                int(ep.get("quality_score", 85)),
+                qb_json,
+                wb_json,
+                ep.get("rendered_video_path"),
+                ep.get("render_id"),
+                ep.get("render_status", "pending"),
+                now, now
+            ))
+
+    conn.close()
+    return series_id
+
+
+def get_series(series_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves a complete series record, including account attributes,
+    source job details, and all ordered episodes with timeline continuity data.
+    """
+    init_db()
+    conn = get_db_connection()
+    cur = conn.execute("""
+        SELECT s.*,
+               a.name as account_name, a.handle as account_handle, a.brand_color as account_color, a.avatar_emoji as account_avatar,
+               j.title as source_video_title, j.duration as source_video_duration, j.source_path as source_video_path,
+               j.source_type as source_video_type
+        FROM series s
+        LEFT JOIN accounts a ON s.account_id = a.id
+        LEFT JOIN jobs j ON s.job_id = j.id
+        WHERE s.id = ?
+    """, (series_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    s = dict(row)
+
+    # Safely parse JSON columns
+    if s.get("story_arc_json"):
+        try:
+            s["story_arc"] = json.loads(s["story_arc_json"])
+        except Exception:
+            s["story_arc"] = s["story_arc_json"]
+    else:
+        s["story_arc"] = None
+
+    if s.get("series_memory_json"):
+        try:
+            s["series_memory"] = json.loads(s["series_memory_json"])
+        except Exception:
+            s["series_memory"] = s["series_memory_json"]
+    else:
+        s["series_memory"] = None
+
+    # Load episodes
+    cur_ep = conn.execute("""
+        SELECT se.*, rs.video_path as direct_render_path
+        FROM series_episodes se
+        LEFT JOIN rendered_shorts rs ON se.render_id = rs.id
+        WHERE se.series_id = ?
+        ORDER BY se.episode_number ASC
+    """, (series_id,))
+    
+    episodes = []
+    for ep_row in cur_ep.fetchall():
+        ep = dict(ep_row)
+        if ep.get("quality_breakdown_json"):
+            try:
+                ep["quality_breakdown"] = json.loads(ep["quality_breakdown_json"])
+            except Exception:
+                ep["quality_breakdown"] = ep["quality_breakdown_json"]
+        else:
+            ep["quality_breakdown"] = {}
+
+        if ep.get("word_boundaries_json"):
+            try:
+                ep["word_boundaries"] = json.loads(ep["word_boundaries_json"])
+            except Exception:
+                ep["word_boundaries"] = []
+        else:
+            ep["word_boundaries"] = []
+
+        # Fallback to direct_render_path if rendered_video_path wasn't stored
+        if not ep.get("rendered_video_path") and ep.get("direct_render_path"):
+            ep["rendered_video_path"] = ep["direct_render_path"]
+
+        episodes.append(ep)
+
+    s["episodes"] = episodes
+    s["episode_count"] = len(episodes)
+    conn.close()
+    return s
+
+
+def list_series(
+    account_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """Lists all generated series with account badges, episode counts, and rendered statuses."""
+    init_db()
+    conn = get_db_connection()
+    query = """
+        SELECT s.*,
+               a.name as account_name, a.handle as account_handle, a.brand_color as account_color, a.avatar_emoji as account_avatar,
+               j.title as source_video_title, j.duration as source_video_duration,
+               COUNT(se.id) as actual_episodes_count,
+               SUM(CASE WHEN se.render_status = 'ready' THEN 1 ELSE 0 END) as rendered_episodes_count
+        FROM series s
+        LEFT JOIN accounts a ON s.account_id = a.id
+        LEFT JOIN jobs j ON s.job_id = j.id
+        LEFT JOIN series_episodes se ON s.id = se.series_id
+    """
+    clauses = []
+    params = []
+
+    if account_id and account_id != "all":
+        clauses.append("s.account_id = ?")
+        params.append(account_id)
+    if job_id:
+        clauses.append("s.job_id = ?")
+        params.append(job_id)
+    if status and status != "all":
+        clauses.append("s.status = ?")
+        params.append(status)
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    query += " GROUP BY s.id ORDER BY s.created_at DESC LIMIT ?"
+    params.append(limit)
+
+    cur = conn.execute(query, tuple(params))
+    series_list = []
+    for row in cur.fetchall():
+        s = dict(row)
+        if s.get("story_arc_json"):
+            try:
+                s["story_arc"] = json.loads(s["story_arc_json"])
+            except Exception:
+                s["story_arc"] = None
+        series_list.append(s)
+
+    conn.close()
+    return series_list
+
+
+def update_series(series_id: str, update_data: Dict[str, Any]) -> bool:
+    """Updates top-level series metadata."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    allowed_fields = [
+        "title", "description", "main_topic", "main_speakers", "episode_count",
+        "status", "quality_score", "generation_mode"
+    ]
+    set_clauses = []
+    values = []
+
+    for k, v in update_data.items():
+        if k in allowed_fields:
+            set_clauses.append(f"{k} = ?")
+            values.append(v)
+        elif k == "story_arc":
+            set_clauses.append("story_arc_json = ?")
+            values.append(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+        elif k == "series_memory":
+            set_clauses.append("series_memory_json = ?")
+            values.append(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+
+    if not set_clauses:
+        conn.close()
+        return False
+
+    set_clauses.append("updated_at = ?")
+    values.append(now)
+    values.append(series_id)
+
+    query = f"UPDATE series SET {', '.join(set_clauses)} WHERE id = ?"
+    with conn:
+        cur = conn.execute(query, tuple(values))
+        affected = cur.rowcount
+    conn.close()
+    return affected > 0
+
+
+def delete_series(series_id: str) -> bool:
+    """Deletes series and cascades removal to all associated episodes."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        conn.execute("DELETE FROM series_episodes WHERE series_id = ?", (series_id,))
+        cur = conn.execute("DELETE FROM series WHERE id = ?", (series_id,))
+        affected = cur.rowcount
+    conn.close()
+    return affected > 0
+
+
+def create_series_episode(episode_data: Dict[str, Any]) -> int:
+    """Creates a new episode within an existing series."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+
+    qb = episode_data.get("quality_breakdown")
+    qb_json = qb if isinstance(qb, str) else (json.dumps(qb, ensure_ascii=False) if qb else None)
+
+    wb = episode_data.get("word_boundaries")
+    wb_json = wb if isinstance(wb, str) else (json.dumps(wb, ensure_ascii=False) if wb else None)
+
+    start_t = float(episode_data.get("start_time", 0.0))
+    end_t = float(episode_data.get("end_time", start_t + 30.0))
+    dur = float(episode_data.get("duration") or round(end_t - start_t, 2))
+
+    with conn:
+        cur = conn.execute("""
+            INSERT INTO series_episodes (
+                series_id, episode_number, title, opening_hook, context_premise,
+                main_content, payoff_text, cliffhanger_text, cliffhanger_type,
+                cliffhanger_score, next_teaser, start_time, end_time, duration,
+                connection_prev, connection_next, is_final_episode, quality_score,
+                quality_breakdown_json, word_boundaries_json, rendered_video_path,
+                render_id, render_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            episode_data["series_id"],
+            int(episode_data.get("episode_number", 1)),
+            episode_data.get("title", "New Episode"),
+            episode_data.get("opening_hook", ""),
+            episode_data.get("context_premise", ""),
+            episode_data.get("main_content", ""),
+            episode_data.get("payoff_text", ""),
+            episode_data.get("cliffhanger_text", ""),
+            episode_data.get("cliffhanger_type", "curiosity_gap"),
+            int(episode_data.get("cliffhanger_score", 80)),
+            episode_data.get("next_teaser", ""),
+            start_t,
+            end_t,
+            dur,
+            episode_data.get("connection_prev", ""),
+            episode_data.get("connection_next", ""),
+            int(episode_data.get("is_final_episode", 0)),
+            int(episode_data.get("quality_score", 85)),
+            qb_json,
+            wb_json,
+            episode_data.get("rendered_video_path"),
+            episode_data.get("render_id"),
+            episode_data.get("render_status", "pending"),
+            now, now
+        ))
+        ep_id = cur.lastrowid
+
+        # Update episode_count on parent series
+        conn.execute("""
+            UPDATE series
+            SET episode_count = (SELECT COUNT(*) FROM series_episodes WHERE series_id = ?),
+                updated_at = ?
+            WHERE id = ?
+        """, (episode_data["series_id"], now, episode_data["series_id"]))
+
+    conn.close()
+    return ep_id
+
+
+def get_series_episode(episode_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieves full details for a single episode."""
+    init_db()
+    conn = get_db_connection()
+    cur = conn.execute("""
+        SELECT se.*, s.title as series_title, s.account_id, s.job_id
+        FROM series_episodes se
+        JOIN series s ON se.series_id = s.id
+        WHERE se.id = ?
+    """, (episode_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    ep = dict(row)
+    if ep.get("quality_breakdown_json"):
+        try:
+            ep["quality_breakdown"] = json.loads(ep["quality_breakdown_json"])
+        except Exception:
+            ep["quality_breakdown"] = {}
+    if ep.get("word_boundaries_json"):
+        try:
+            ep["word_boundaries"] = json.loads(ep["word_boundaries_json"])
+        except Exception:
+            ep["word_boundaries"] = []
+    conn.close()
+    return ep
+
+
+def list_series_episodes(series_id: str) -> List[Dict[str, Any]]:
+    """Lists all episodes in a series ordered by sequence."""
+    init_db()
+    conn = get_db_connection()
+    cur = conn.execute("""
+        SELECT * FROM series_episodes
+        WHERE series_id = ?
+        ORDER BY episode_number ASC
+    """, (series_id,))
+    episodes = []
+    for row in cur.fetchall():
+        ep = dict(row)
+        if ep.get("quality_breakdown_json"):
+            try:
+                ep["quality_breakdown"] = json.loads(ep["quality_breakdown_json"])
+            except Exception:
+                ep["quality_breakdown"] = {}
+        if ep.get("word_boundaries_json"):
+            try:
+                ep["word_boundaries"] = json.loads(ep["word_boundaries_json"])
+            except Exception:
+                ep["word_boundaries"] = []
+        episodes.append(ep)
+    conn.close()
+    return episodes
+
+
+def update_series_episode(episode_id: int, update_data: Dict[str, Any]) -> bool:
+    """Updates specific fields of an episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    allowed_fields = [
+        "episode_number", "title", "opening_hook", "context_premise", "main_content",
+        "payoff_text", "cliffhanger_text", "cliffhanger_type", "cliffhanger_score",
+        "next_teaser", "start_time", "end_time", "duration", "connection_prev",
+        "connection_next", "is_final_episode", "quality_score", "rendered_video_path",
+        "render_id", "render_status"
+    ]
+    set_clauses = []
+    values = []
+
+    for k, v in update_data.items():
+        if k in allowed_fields:
+            set_clauses.append(f"{k} = ?")
+            values.append(v)
+        elif k == "quality_breakdown":
+            set_clauses.append("quality_breakdown_json = ?")
+            values.append(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+        elif k == "word_boundaries":
+            set_clauses.append("word_boundaries_json = ?")
+            values.append(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+
+    # Recalculate duration if timestamps provided
+    if "start_time" in update_data and "end_time" in update_data and "duration" not in update_data:
+        set_clauses.append("duration = ?")
+        values.append(round(float(update_data["end_time"]) - float(update_data["start_time"]), 2))
+
+    if not set_clauses:
+        conn.close()
+        return False
+
+    set_clauses.append("updated_at = ?")
+    values.append(now)
+    values.append(episode_id)
+
+    query = f"UPDATE series_episodes SET {', '.join(set_clauses)} WHERE id = ?"
+    with conn:
+        cur = conn.execute(query, tuple(values))
+        affected = cur.rowcount
+    conn.close()
+    return affected > 0
+
+
+def delete_series_episode(episode_id: int) -> bool:
+    """
+    Deletes an episode, renumbers subsequent episodes in that series to maintain a clean sequence,
+    ensures the new last episode is flagged as final, and updates the series episode count.
+    """
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+
+    with conn:
+        cur_find = conn.execute("SELECT series_id FROM series_episodes WHERE id = ?", (episode_id,))
+        row = cur_find.fetchone()
+        if not row:
+            conn.close()
+            return False
+        series_id = row["series_id"]
+
+        # Delete episode
+        conn.execute("DELETE FROM series_episodes WHERE id = ?", (episode_id,))
+
+        # Renumber remaining episodes
+        remaining = conn.execute("""
+            SELECT id FROM series_episodes
+            WHERE series_id = ?
+            ORDER BY episode_number ASC, id ASC
+        """, (series_id,)).fetchall()
+
+        total = len(remaining)
+        for idx, r in enumerate(remaining):
+            is_final = 1 if (idx == total - 1) else 0
+            conn.execute("""
+                UPDATE series_episodes
+                SET episode_number = ?, is_final_episode = ?, updated_at = ?
+                WHERE id = ?
+            """, (idx + 1, is_final, now, r["id"]))
+
+        # Update parent series count
+        conn.execute("""
+            UPDATE series
+            SET episode_count = ?, updated_at = ?
+            WHERE id = ?
+        """, (total, now, series_id))
+
+    conn.close()
+    return True
+
+
+# =====================================================================
+# --- AI METADATA & SEO GENERATOR PERSISTENCE ---
+# =====================================================================
+
+def save_video_metadata(
+    target_type: str,
+    target_id: Any,
+    title: str,
+    niche: str = "Motivation",
+    youtube_data: Optional[Dict[str, Any]] = None,
+    instagram_data: Optional[Dict[str, Any]] = None,
+    tiktok_data: Optional[Dict[str, Any]] = None,
+    title_variations: Optional[Dict[str, Any]] = None,
+    quality_score: int = 85,
+    quality_breakdown: Optional[Dict[str, Any]] = None,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation",
+    status: str = "draft"
+) -> int:
+    """Saves or updates full platform metadata for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        # Check if record already exists
+        cur = conn.execute(
+            "SELECT id FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        existing = cur.fetchone()
+        yt_json = json.dumps(youtube_data or {})
+        ig_json = json.dumps(instagram_data or {})
+        tt_json = json.dumps(tiktok_data or {})
+        tv_json = json.dumps(title_variations or {})
+        qb_json = json.dumps(quality_breakdown or {})
+
+        if existing:
+            meta_id = existing["id"]
+            conn.execute("""
+                UPDATE video_metadata
+                SET title = ?, niche = ?, youtube_json = ?, instagram_json = ?,
+                    tiktok_json = ?, title_variations_json = ?, quality_score = ?,
+                    quality_breakdown_json = ?, job_id = COALESCE(?, job_id),
+                    account_id = ?, status = ?, updated_at = ?
+                WHERE id = ?
+            """, (title, niche, yt_json, ig_json, tt_json, tv_json, quality_score,
+                  qb_json, job_id, account_id, status, now, meta_id))
+        else:
+            cur_ins = conn.execute("""
+                INSERT INTO video_metadata (
+                    job_id, target_type, target_id, account_id, title, niche,
+                    youtube_json, instagram_json, tiktok_json, title_variations_json,
+                    quality_score, quality_breakdown_json, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (job_id, target_type, t_id_str, account_id, title, niche,
+                  yt_json, ig_json, tt_json, tv_json, quality_score, qb_json, status, now, now))
+            meta_id = cur_ins.lastrowid
+
+    conn.close()
+    return meta_id
+
+
+def get_video_metadata(target_type: str, target_id: Any) -> Optional[Dict[str, Any]]:
+    """Retrieves full platform metadata for a specific target."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute(
+            "SELECT * FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    res = dict(row)
+    for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+        if res.get(f):
+            try:
+                res[f.replace("_json", "")] = json.loads(res[f])
+            except Exception:
+                pass
+    return res
+
+
+def list_video_metadata(account_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """Lists video metadata records."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM video_metadata"
+        params = []
+        if account_id and account_id != "all":
+            q += " WHERE account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    res = []
+    for r in rows:
+        d = dict(r)
+        for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+            if d.get(f):
+                try:
+                    d[f.replace("_json", "")] = json.loads(d[f])
+                except Exception:
+                    pass
+        res.append(d)
+    return res
+
+
+def update_video_metadata_field(
+    target_type: str,
+    target_id: Any,
+    platform: str,
+    field_name: str,
+    new_value: Any
+) -> bool:
+    """Updates a specific field in YouTube, Instagram, or TikTok metadata."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    now = datetime.now(timezone.utc).isoformat()
+    json_col = f"{platform}_json"
+    with conn:
+        cur = conn.execute(
+            f"SELECT id, {json_col} FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+
+        meta_id = row["id"]
+        curr_data = {}
+        if row[json_col]:
+            try:
+                curr_data = json.loads(row[json_col])
+            except Exception:
+                pass
+
+        curr_data[field_name] = new_value
+        conn.execute(
+            f"UPDATE video_metadata SET {json_col} = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(curr_data), now, meta_id)
+        )
+    conn.close()
+    return True
+
+
+def delete_video_metadata(target_type: str, target_id: Any) -> bool:
+    """Deletes metadata record."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        conn.execute(
+            "DELETE FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+    conn.close()
+    return True
+
+
+# =====================================================================
+# --- AI THUMBNAIL & COVER ASSET PERSISTENCE ---
+# =====================================================================
+
+def save_thumbnail_asset(
+    target_type: str,
+    target_id: Any,
+    image_path: str,
+    headline: str,
+    variation_type: str = "emotional",
+    aspect_ratio: str = "9:16",
+    style_mode: str = "auto",
+    source_timestamp: float = 1.0,
+    is_selected: int = 0,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation"
+) -> int:
+    """Saves a thumbnail asset variation for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        if is_selected:
+            # Unselect other thumbnails for this target and aspect ratio
+            conn.execute("""
+                UPDATE thumbnail_assets
+                SET is_selected = 0
+                WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+            """, (target_type, t_id_str, aspect_ratio))
+
+        cur = conn.execute("""
+            INSERT INTO thumbnail_assets (
+                job_id, target_type, target_id, account_id, aspect_ratio,
+                platform, style_mode, variation_type, headline, image_path,
+                source_timestamp, is_selected, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (job_id, target_type, t_id_str, account_id, aspect_ratio,
+              "universal", style_mode, variation_type, headline, image_path,
+              source_timestamp, is_selected, now))
+        asset_id = cur.lastrowid
+    conn.close()
+    return asset_id
+
+
+def get_thumbnail_asset(asset_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieves a single thumbnail asset by ID."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT * FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_thumbnail_assets(
+    target_type: Optional[str] = None,
+    target_id: Optional[Any] = None,
+    account_id: Optional[str] = None,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """Lists thumbnail assets with optional filtering."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM thumbnail_assets WHERE 1=1"
+        params = []
+        if target_type:
+            q += " AND target_type = ?"
+            params.append(target_type)
+        if target_id is not None:
+            q += " AND target_id = ?"
+            params.append(str(target_id))
+        if account_id and account_id != "all":
+            q += " AND account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY is_selected DESC, created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def select_thumbnail_asset(asset_id: int, target_type: str, target_id: Any) -> bool:
+    """Designates a specific thumbnail variation as the approved active cover."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    with conn:
+        # Get aspect ratio of the target asset
+        cur = conn.execute("SELECT aspect_ratio FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+        ar = row["aspect_ratio"]
+        conn.execute("""
+            UPDATE thumbnail_assets
+            SET is_selected = 0
+            WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+        """, (target_type, t_id_str, ar))
+        conn.execute("UPDATE thumbnail_assets SET is_selected = 1 WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+
+def delete_thumbnail_asset(asset_id: int) -> bool:
+    """Deletes a thumbnail asset and removes its local file if present."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT image_path FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if row and row["image_path"] and os.path.exists(row["image_path"]):
+            try:
+                os.remove(row["image_path"])
+            except Exception:
+                pass
+        conn.execute("DELETE FROM thumbnail_assets WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+
+
+def reorder_series_episodes(series_id: str, episode_ids_order: List[int]) -> bool:
+    """
+    Reorders episodes according to the given list of IDs,
+    marking the last element as final.
+    """
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+
+    with conn:
+        total = len(episode_ids_order)
+        for idx, ep_id in enumerate(episode_ids_order):
+            is_final = 1 if (idx == total - 1) else 0
+            conn.execute("""
+                UPDATE series_episodes
+                SET episode_number = ?, is_final_episode = ?, updated_at = ?
+                WHERE id = ? AND series_id = ?
+            """, (idx + 1, is_final, now, ep_id, series_id))
+
+        conn.execute("""
+            UPDATE series
+            SET episode_count = ?, updated_at = ?
+            WHERE id = ?
+        """, (total, now, series_id))
+
+    conn.close()
+    return True
+
+
+# =====================================================================
+# --- AI METADATA & SEO GENERATOR PERSISTENCE ---
+# =====================================================================
+
+def save_video_metadata(
+    target_type: str,
+    target_id: Any,
+    title: str,
+    niche: str = "Motivation",
+    youtube_data: Optional[Dict[str, Any]] = None,
+    instagram_data: Optional[Dict[str, Any]] = None,
+    tiktok_data: Optional[Dict[str, Any]] = None,
+    title_variations: Optional[Dict[str, Any]] = None,
+    quality_score: int = 85,
+    quality_breakdown: Optional[Dict[str, Any]] = None,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation",
+    status: str = "draft"
+) -> int:
+    """Saves or updates full platform metadata for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        # Check if record already exists
+        cur = conn.execute(
+            "SELECT id FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        existing = cur.fetchone()
+        yt_json = json.dumps(youtube_data or {})
+        ig_json = json.dumps(instagram_data or {})
+        tt_json = json.dumps(tiktok_data or {})
+        tv_json = json.dumps(title_variations or {})
+        qb_json = json.dumps(quality_breakdown or {})
+
+        if existing:
+            meta_id = existing["id"]
+            conn.execute("""
+                UPDATE video_metadata
+                SET title = ?, niche = ?, youtube_json = ?, instagram_json = ?,
+                    tiktok_json = ?, title_variations_json = ?, quality_score = ?,
+                    quality_breakdown_json = ?, job_id = COALESCE(?, job_id),
+                    account_id = ?, status = ?, updated_at = ?
+                WHERE id = ?
+            """, (title, niche, yt_json, ig_json, tt_json, tv_json, quality_score,
+                  qb_json, job_id, account_id, status, now, meta_id))
+        else:
+            cur_ins = conn.execute("""
+                INSERT INTO video_metadata (
+                    job_id, target_type, target_id, account_id, title, niche,
+                    youtube_json, instagram_json, tiktok_json, title_variations_json,
+                    quality_score, quality_breakdown_json, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (job_id, target_type, t_id_str, account_id, title, niche,
+                  yt_json, ig_json, tt_json, tv_json, quality_score, qb_json, status, now, now))
+            meta_id = cur_ins.lastrowid
+
+    conn.close()
+    return meta_id
+
+
+def get_video_metadata(target_type: str, target_id: Any) -> Optional[Dict[str, Any]]:
+    """Retrieves full platform metadata for a specific target."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute(
+            "SELECT * FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    res = dict(row)
+    for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+        if res.get(f):
+            try:
+                res[f.replace("_json", "")] = json.loads(res[f])
+            except Exception:
+                pass
+    return res
+
+
+def list_video_metadata(account_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """Lists video metadata records."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM video_metadata"
+        params = []
+        if account_id and account_id != "all":
+            q += " WHERE account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    res = []
+    for r in rows:
+        d = dict(r)
+        for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+            if d.get(f):
+                try:
+                    d[f.replace("_json", "")] = json.loads(d[f])
+                except Exception:
+                    pass
+        res.append(d)
+    return res
+
+
+def update_video_metadata_field(
+    target_type: str,
+    target_id: Any,
+    platform: str,
+    field_name: str,
+    new_value: Any
+) -> bool:
+    """Updates a specific field in YouTube, Instagram, or TikTok metadata."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    now = datetime.now(timezone.utc).isoformat()
+    json_col = f"{platform}_json"
+    with conn:
+        cur = conn.execute(
+            f"SELECT id, {json_col} FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+
+        meta_id = row["id"]
+        curr_data = {}
+        if row[json_col]:
+            try:
+                curr_data = json.loads(row[json_col])
+            except Exception:
+                pass
+
+        curr_data[field_name] = new_value
+        conn.execute(
+            f"UPDATE video_metadata SET {json_col} = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(curr_data), now, meta_id)
+        )
+    conn.close()
+    return True
+
+
+def delete_video_metadata(target_type: str, target_id: Any) -> bool:
+    """Deletes metadata record."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        conn.execute(
+            "DELETE FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+    conn.close()
+    return True
+
+
+# =====================================================================
+# --- AI THUMBNAIL & COVER ASSET PERSISTENCE ---
+# =====================================================================
+
+def save_thumbnail_asset(
+    target_type: str,
+    target_id: Any,
+    image_path: str,
+    headline: str,
+    variation_type: str = "emotional",
+    aspect_ratio: str = "9:16",
+    style_mode: str = "auto",
+    source_timestamp: float = 1.0,
+    is_selected: int = 0,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation"
+) -> int:
+    """Saves a thumbnail asset variation for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        if is_selected:
+            # Unselect other thumbnails for this target and aspect ratio
+            conn.execute("""
+                UPDATE thumbnail_assets
+                SET is_selected = 0
+                WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+            """, (target_type, t_id_str, aspect_ratio))
+
+        cur = conn.execute("""
+            INSERT INTO thumbnail_assets (
+                job_id, target_type, target_id, account_id, aspect_ratio,
+                platform, style_mode, variation_type, headline, image_path,
+                source_timestamp, is_selected, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (job_id, target_type, t_id_str, account_id, aspect_ratio,
+              "universal", style_mode, variation_type, headline, image_path,
+              source_timestamp, is_selected, now))
+        asset_id = cur.lastrowid
+    conn.close()
+    return asset_id
+
+
+def get_thumbnail_asset(asset_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieves a single thumbnail asset by ID."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT * FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_thumbnail_assets(
+    target_type: Optional[str] = None,
+    target_id: Optional[Any] = None,
+    account_id: Optional[str] = None,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """Lists thumbnail assets with optional filtering."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM thumbnail_assets WHERE 1=1"
+        params = []
+        if target_type:
+            q += " AND target_type = ?"
+            params.append(target_type)
+        if target_id is not None:
+            q += " AND target_id = ?"
+            params.append(str(target_id))
+        if account_id and account_id != "all":
+            q += " AND account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY is_selected DESC, created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def select_thumbnail_asset(asset_id: int, target_type: str, target_id: Any) -> bool:
+    """Designates a specific thumbnail variation as the approved active cover."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    with conn:
+        # Get aspect ratio of the target asset
+        cur = conn.execute("SELECT aspect_ratio FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+        ar = row["aspect_ratio"]
+        conn.execute("""
+            UPDATE thumbnail_assets
+            SET is_selected = 0
+            WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+        """, (target_type, t_id_str, ar))
+        conn.execute("UPDATE thumbnail_assets SET is_selected = 1 WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+
+def delete_thumbnail_asset(asset_id: int) -> bool:
+    """Deletes a thumbnail asset and removes its local file if present."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT image_path FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if row and row["image_path"] and os.path.exists(row["image_path"]):
+            try:
+                os.remove(row["image_path"])
+            except Exception:
+                pass
+        conn.execute("DELETE FROM thumbnail_assets WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+
+
+def merge_series_episodes(series_id: str, ep1_id: int, ep2_id: int) -> Optional[int]:
+    """
+    Merges ep2 into ep1:
+    - Combines start and end times.
+    - Joins content and preserves ep2's cliffhanger.
+    - Removes ep2 and renumbers remaining episodes.
+    """
+    init_db()
+    conn = get_db_connection()
+    ep1 = get_series_episode(ep1_id)
+    ep2 = get_series_episode(ep2_id)
+
+    if not ep1 or not ep2 or ep1["series_id"] != series_id or ep2["series_id"] != series_id:
+        conn.close()
+        return None
+
+    # Determine chronological order
+    if ep1["start_time"] > ep2["start_time"]:
+        ep1, ep2 = ep2, ep1
+
+    new_start = min(ep1["start_time"], ep2["start_time"])
+    new_end = max(ep1["end_time"], ep2["end_time"])
+    new_dur = round(new_end - new_start, 2)
+    merged_title = f"{ep1['title']} & {ep2['title']}".replace("Episode ", "Ep ")
+    merged_content = f"{ep1.get('main_content', '')} {ep2.get('main_content', '')}".strip()
+
+    now = datetime.now(timezone.utc).isoformat()
+    with conn:
+        conn.execute("""
+            UPDATE series_episodes
+            SET title = ?, start_time = ?, end_time = ?, duration = ?,
+                main_content = ?, cliffhanger_text = ?, cliffhanger_type = ?,
+                cliffhanger_score = ?, next_teaser = ?, is_final_episode = ?,
+                updated_at = ?
+            WHERE id = ?
+        """, (
+            merged_title, new_start, new_end, new_dur, merged_content,
+            ep2.get("cliffhanger_text", ep1.get("cliffhanger_text", "")),
+            ep2.get("cliffhanger_type", ep1.get("cliffhanger_type", "curiosity_gap")),
+            ep2.get("cliffhanger_score", ep1.get("cliffhanger_score", 80)),
+            ep2.get("next_teaser", ep1.get("next_teaser", "")),
+            ep2.get("is_final_episode", 0),
+            now, ep1["id"]
+        ))
+        conn.execute("DELETE FROM series_episodes WHERE id = ?", (ep2["id"],))
+
+        # Renumber remaining
+        remaining = conn.execute("""
+            SELECT id FROM series_episodes
+            WHERE series_id = ?
+            ORDER BY episode_number ASC, id ASC
+        """, (series_id,)).fetchall()
+
+        total = len(remaining)
+        for idx, r in enumerate(remaining):
+            is_final = 1 if (idx == total - 1) else 0
+            conn.execute("""
+                UPDATE series_episodes
+                SET episode_number = ?, is_final_episode = ?, updated_at = ?
+                WHERE id = ?
+            """, (idx + 1, is_final, now, r["id"]))
+
+        conn.execute("""
+            UPDATE series
+            SET episode_count = ?, updated_at = ?
+            WHERE id = ?
+        """, (total, now, series_id))
+
+    conn.close()
+    return ep1["id"]
+
+
+def split_series_episode(
+    series_id: str,
+    episode_id: int,
+    split_time: float,
+    ep1_cliffhanger: str = "",
+    ep2_hook: str = ""
+) -> Optional[Tuple[int, int]]:
+    """
+    Splits an episode into two at split_time.
+    Creates a new following episode and adjusts boundaries and cliffhangers.
+    """
+    init_db()
+    conn = get_db_connection()
+    ep = get_series_episode(episode_id)
+    if not ep or ep["series_id"] != series_id:
+        conn.close()
+        return None
+
+    if not (ep["start_time"] < split_time < ep["end_time"]):
+        conn.close()
+        return None
+
+    now = datetime.now(timezone.utc).isoformat()
+    cliff1 = ep1_cliffhanger or "Wait... what happens next?"
+    hook2 = ep2_hook or f"Picking up right where we left off in Part {ep['episode_number']}..."
+
+    part1_dur = round(split_time - ep["start_time"], 2)
+    part2_dur = round(ep["end_time"] - split_time, 2)
+
+    with conn:
+        # Update part 1
+        conn.execute("""
+            UPDATE series_episodes
+            SET end_time = ?, duration = ?, cliffhanger_text = ?, is_final_episode = 0, updated_at = ?
+            WHERE id = ?
+        """, (split_time, part1_dur, cliff1, now, episode_id))
+
+        # Insert part 2
+        cur = conn.execute("""
+            INSERT INTO series_episodes (
+                series_id, episode_number, title, opening_hook, context_premise,
+                main_content, payoff_text, cliffhanger_text, cliffhanger_type,
+                cliffhanger_score, next_teaser, start_time, end_time, duration,
+                connection_prev, connection_next, is_final_episode, quality_score,
+                render_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        """, (
+            series_id,
+            ep["episode_number"] + 1,
+            f"{ep['title']} (Part 2)",
+            hook2,
+            f"Continuation of {ep['title']}",
+            ep.get("main_content", ""),
+            ep.get("payoff_text", ""),
+            ep.get("cliffhanger_text", ""),
+            ep.get("cliffhanger_type", "curiosity_gap"),
+            ep.get("cliffhanger_score", 80),
+            ep.get("next_teaser", ""),
+            split_time,
+            ep["end_time"],
+            part2_dur,
+            f"Follows directly from {ep['title']}",
+            ep.get("connection_next", ""),
+            ep.get("is_final_episode", 0),
+            ep.get("quality_score", 85),
+            now, now
+        ))
+        ep2_id = cur.lastrowid
+
+        # Renumber all episodes
+        all_eps = conn.execute("""
+            SELECT id FROM series_episodes
+            WHERE series_id = ?
+            ORDER BY start_time ASC, id ASC
+        """, (series_id,)).fetchall()
+
+        total = len(all_eps)
+        for idx, r in enumerate(all_eps):
+            is_final = 1 if (idx == total - 1) else 0
+            conn.execute("""
+                UPDATE series_episodes
+                SET episode_number = ?, is_final_episode = ?, updated_at = ?
+                WHERE id = ?
+            """, (idx + 1, is_final, now, r["id"]))
+
+        conn.execute("""
+            UPDATE series
+            SET episode_count = ?, updated_at = ?
+            WHERE id = ?
+        """, (total, now, series_id))
+
+    conn.close()
+    return (episode_id, ep2_id)
+
+
+def update_episode_render_result(
+    episode_id: int,
+    render_status: str,
+    rendered_video_path: Optional[str] = None,
+    render_id: Optional[int] = None
+) -> bool:
+    """
+    Updates the render state of an episode and automatically transitions
+    the parent series to 'completed' if all episodes are rendered.
+    """
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    with conn:
+        conn.execute("""
+            UPDATE series_episodes
+            SET render_status = ?, rendered_video_path = COALESCE(?, rendered_video_path),
+                render_id = COALESCE(?, render_id), updated_at = ?
+            WHERE id = ?
+        """, (render_status, rendered_video_path, render_id, now, episode_id))
+
+        # Check parent series status
+        cur_find = conn.execute("SELECT series_id FROM series_episodes WHERE id = ?", (episode_id,))
+        row = cur_find.fetchone()
+        if row:
+            sid = row["series_id"]
+            cur_check = conn.execute("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN render_status = 'ready' THEN 1 ELSE 0 END) as ready_count,
+                       SUM(CASE WHEN render_status = 'rendering' THEN 1 ELSE 0 END) as rendering_count
+                FROM series_episodes
+                WHERE series_id = ?
+            """, (sid,))
+            stat = cur_check.fetchone()
+            if stat["total"] > 0 and stat["ready_count"] == stat["total"]:
+                conn.execute("UPDATE series SET status = 'completed', updated_at = ? WHERE id = ?", (now, sid))
+            elif stat["rendering_count"] > 0:
+                conn.execute("UPDATE series SET status = 'rendering', updated_at = ? WHERE id = ?", (now, sid))
+
+    conn.close()
+    return True
+
+
+# =====================================================================
+# --- AI METADATA & SEO GENERATOR PERSISTENCE ---
+# =====================================================================
+
+
+# =====================================================================
+# --- AI METADATA & SEO GENERATOR PERSISTENCE ---
+# =====================================================================
+
+def save_video_metadata(
+    target_type: str,
+    target_id: Any,
+    title: str,
+    niche: str = "Motivation",
+    youtube_data: Optional[Dict[str, Any]] = None,
+    instagram_data: Optional[Dict[str, Any]] = None,
+    tiktok_data: Optional[Dict[str, Any]] = None,
+    title_variations: Optional[Dict[str, Any]] = None,
+    quality_score: int = 85,
+    quality_breakdown: Optional[Dict[str, Any]] = None,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation",
+    status: str = "draft"
+) -> int:
+    """Saves or updates full platform metadata for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        cur = conn.execute(
+            "SELECT id FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        existing = cur.fetchone()
+        yt_json = json.dumps(youtube_data or {})
+        ig_json = json.dumps(instagram_data or {})
+        tt_json = json.dumps(tiktok_data or {})
+        tv_json = json.dumps(title_variations or {})
+        qb_json = json.dumps(quality_breakdown or {})
+
+        if existing:
+            meta_id = existing["id"]
+            conn.execute("""
+                UPDATE video_metadata
+                SET title = ?, niche = ?, youtube_json = ?, instagram_json = ?,
+                    tiktok_json = ?, title_variations_json = ?, quality_score = ?,
+                    quality_breakdown_json = ?, job_id = COALESCE(?, job_id),
+                    account_id = ?, status = ?, updated_at = ?
+                WHERE id = ?
+            """, (title, niche, yt_json, ig_json, tt_json, tv_json, quality_score,
+                  qb_json, job_id, account_id, status, now, meta_id))
+        else:
+            cur_ins = conn.execute("""
+                INSERT INTO video_metadata (
+                    job_id, target_type, target_id, account_id, title, niche,
+                    youtube_json, instagram_json, tiktok_json, title_variations_json,
+                    quality_score, quality_breakdown_json, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (job_id, target_type, t_id_str, account_id, title, niche,
+                  yt_json, ig_json, tt_json, tv_json, quality_score, qb_json, status, now, now))
+            meta_id = cur_ins.lastrowid
+
+    conn.close()
+    return meta_id
+
+
+def get_video_metadata(target_type: str, target_id: Any) -> Optional[Dict[str, Any]]:
+    """Retrieves full platform metadata for a specific target."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute(
+            "SELECT * FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    res = dict(row)
+    for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+        if res.get(f):
+            try:
+                res[f.replace("_json", "")] = json.loads(res[f])
+            except Exception:
+                pass
+    return res
+
+
+def list_video_metadata(account_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """Lists video metadata records."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM video_metadata"
+        params = []
+        if account_id and account_id != "all":
+            q += " WHERE account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    res = []
+    for r in rows:
+        d = dict(r)
+        for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+            if d.get(f):
+                try:
+                    d[f.replace("_json", "")] = json.loads(d[f])
+                except Exception:
+                    pass
+        res.append(d)
+    return res
+
+
+def update_video_metadata_field(
+    target_type: str,
+    target_id: Any,
+    platform: str,
+    field_name: str,
+    new_value: Any
+) -> bool:
+    """Updates a specific field in YouTube, Instagram, or TikTok metadata."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    now = datetime.now(timezone.utc).isoformat()
+    json_col = f"{platform}_json"
+    with conn:
+        cur = conn.execute(
+            f"SELECT id, {json_col} FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+
+        meta_id = row["id"]
+        curr_data = {}
+        if row[json_col]:
+            try:
+                curr_data = json.loads(row[json_col])
+            except Exception:
+                pass
+
+        curr_data[field_name] = new_value
+        conn.execute(
+            f"UPDATE video_metadata SET {json_col} = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(curr_data), now, meta_id)
+        )
+    conn.close()
+    return True
+
+
+def delete_video_metadata(target_type: str, target_id: Any) -> bool:
+    """Deletes metadata record."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        conn.execute(
+            "DELETE FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+    conn.close()
+    return True
+
+
+# =====================================================================
+# --- AI THUMBNAIL & COVER ASSET PERSISTENCE ---
+# =====================================================================
+
+def save_thumbnail_asset(
+    target_type: str,
+    target_id: Any,
+    image_path: str,
+    headline: str,
+    variation_type: str = "emotional",
+    aspect_ratio: str = "9:16",
+    style_mode: str = "auto",
+    source_timestamp: float = 1.0,
+    is_selected: int = 0,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation"
+) -> int:
+    """Saves a thumbnail asset variation for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        if is_selected:
+            conn.execute("""
+                UPDATE thumbnail_assets
+                SET is_selected = 0
+                WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+            """, (target_type, t_id_str, aspect_ratio))
+
+        cur = conn.execute("""
+            INSERT INTO thumbnail_assets (
+                job_id, target_type, target_id, account_id, aspect_ratio,
+                platform, style_mode, variation_type, headline, image_path,
+                source_timestamp, is_selected, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (job_id, target_type, t_id_str, account_id, aspect_ratio,
+              "universal", style_mode, variation_type, headline, image_path,
+              source_timestamp, is_selected, now))
+        asset_id = cur.lastrowid
+    conn.close()
+    return asset_id
+
+
+def get_thumbnail_asset(asset_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieves a single thumbnail asset by ID."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT * FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_thumbnail_assets(
+    target_type: Optional[str] = None,
+    target_id: Optional[Any] = None,
+    account_id: Optional[str] = None,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """Lists thumbnail assets with optional filtering."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM thumbnail_assets WHERE 1=1"
+        params = []
+        if target_type:
+            q += " AND target_type = ?"
+            params.append(target_type)
+        if target_id is not None:
+            q += " AND target_id = ?"
+            params.append(str(target_id))
+        if account_id and account_id != "all":
+            q += " AND account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY is_selected DESC, created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def select_thumbnail_asset(asset_id: int, target_type: str, target_id: Any) -> bool:
+    """Designates a specific thumbnail variation as the approved active cover."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    with conn:
+        cur = conn.execute("SELECT aspect_ratio FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+        ar = row["aspect_ratio"]
+        conn.execute("""
+            UPDATE thumbnail_assets
+            SET is_selected = 0
+            WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+        """, (target_type, t_id_str, ar))
+        conn.execute("UPDATE thumbnail_assets SET is_selected = 1 WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+
+def delete_thumbnail_asset(asset_id: int) -> bool:
+    """Deletes a thumbnail asset and removes its local file if present."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT image_path FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if row and row["image_path"] and os.path.exists(row["image_path"]):
+            try:
+                os.remove(row["image_path"])
+            except Exception:
+                pass
+        conn.execute("DELETE FROM thumbnail_assets WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+def save_video_metadata(
+    target_type: str,
+    target_id: Any,
+    title: str,
+    niche: str = "Motivation",
+    youtube_data: Optional[Dict[str, Any]] = None,
+    instagram_data: Optional[Dict[str, Any]] = None,
+    tiktok_data: Optional[Dict[str, Any]] = None,
+    title_variations: Optional[Dict[str, Any]] = None,
+    quality_score: int = 85,
+    quality_breakdown: Optional[Dict[str, Any]] = None,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation",
+    status: str = "draft"
+) -> int:
+    """Saves or updates full platform metadata for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        # Check if record already exists
+        cur = conn.execute(
+            "SELECT id FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        existing = cur.fetchone()
+        yt_json = json.dumps(youtube_data or {})
+        ig_json = json.dumps(instagram_data or {})
+        tt_json = json.dumps(tiktok_data or {})
+        tv_json = json.dumps(title_variations or {})
+        qb_json = json.dumps(quality_breakdown or {})
+
+        if existing:
+            meta_id = existing["id"]
+            conn.execute("""
+                UPDATE video_metadata
+                SET title = ?, niche = ?, youtube_json = ?, instagram_json = ?,
+                    tiktok_json = ?, title_variations_json = ?, quality_score = ?,
+                    quality_breakdown_json = ?, job_id = COALESCE(?, job_id),
+                    account_id = ?, status = ?, updated_at = ?
+                WHERE id = ?
+            """, (title, niche, yt_json, ig_json, tt_json, tv_json, quality_score,
+                  qb_json, job_id, account_id, status, now, meta_id))
+        else:
+            cur_ins = conn.execute("""
+                INSERT INTO video_metadata (
+                    job_id, target_type, target_id, account_id, title, niche,
+                    youtube_json, instagram_json, tiktok_json, title_variations_json,
+                    quality_score, quality_breakdown_json, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (job_id, target_type, t_id_str, account_id, title, niche,
+                  yt_json, ig_json, tt_json, tv_json, quality_score, qb_json, status, now, now))
+            meta_id = cur_ins.lastrowid
+
+    conn.close()
+    return meta_id
+
+
+def get_video_metadata(target_type: str, target_id: Any) -> Optional[Dict[str, Any]]:
+    """Retrieves full platform metadata for a specific target."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute(
+            "SELECT * FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    res = dict(row)
+    for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+        if res.get(f):
+            try:
+                res[f.replace("_json", "")] = json.loads(res[f])
+            except Exception:
+                pass
+    return res
+
+
+def list_video_metadata(account_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """Lists video metadata records."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM video_metadata"
+        params = []
+        if account_id and account_id != "all":
+            q += " WHERE account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    res = []
+    for r in rows:
+        d = dict(r)
+        for f in ("youtube_json", "instagram_json", "tiktok_json", "title_variations_json", "quality_breakdown_json"):
+            if d.get(f):
+                try:
+                    d[f.replace("_json", "")] = json.loads(d[f])
+                except Exception:
+                    pass
+        res.append(d)
+    return res
+
+
+def update_video_metadata_field(
+    target_type: str,
+    target_id: Any,
+    platform: str,
+    field_name: str,
+    new_value: Any
+) -> bool:
+    """Updates a specific field in YouTube, Instagram, or TikTok metadata."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    now = datetime.now(timezone.utc).isoformat()
+    json_col = f"{platform}_json"
+    with conn:
+        cur = conn.execute(
+            f"SELECT id, {json_col} FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, t_id_str)
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+
+        meta_id = row["id"]
+        curr_data = {}
+        if row[json_col]:
+            try:
+                curr_data = json.loads(row[json_col])
+            except Exception:
+                pass
+
+        curr_data[field_name] = new_value
+        conn.execute(
+            f"UPDATE video_metadata SET {json_col} = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(curr_data), now, meta_id)
+        )
+    conn.close()
+    return True
+
+
+def delete_video_metadata(target_type: str, target_id: Any) -> bool:
+    """Deletes metadata record."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        conn.execute(
+            "DELETE FROM video_metadata WHERE target_type = ? AND target_id = ?",
+            (target_type, str(target_id))
+        )
+    conn.close()
+    return True
+
+
+# =====================================================================
+# --- AI THUMBNAIL & COVER ASSET PERSISTENCE ---
+# =====================================================================
+
+def save_thumbnail_asset(
+    target_type: str,
+    target_id: Any,
+    image_path: str,
+    headline: str,
+    variation_type: str = "emotional",
+    aspect_ratio: str = "9:16",
+    style_mode: str = "auto",
+    source_timestamp: float = 1.0,
+    is_selected: int = 0,
+    job_id: Optional[str] = None,
+    account_id: str = "acc_motivation"
+) -> int:
+    """Saves a thumbnail asset variation for a video, short, or episode."""
+    init_db()
+    conn = get_db_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    t_id_str = str(target_id)
+    with conn:
+        if is_selected:
+            # Unselect other thumbnails for this target and aspect ratio
+            conn.execute("""
+                UPDATE thumbnail_assets
+                SET is_selected = 0
+                WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+            """, (target_type, t_id_str, aspect_ratio))
+
+        cur = conn.execute("""
+            INSERT INTO thumbnail_assets (
+                job_id, target_type, target_id, account_id, aspect_ratio,
+                platform, style_mode, variation_type, headline, image_path,
+                source_timestamp, is_selected, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (job_id, target_type, t_id_str, account_id, aspect_ratio,
+              "universal", style_mode, variation_type, headline, image_path,
+              source_timestamp, is_selected, now))
+        asset_id = cur.lastrowid
+    conn.close()
+    return asset_id
+
+
+def get_thumbnail_asset(asset_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieves a single thumbnail asset by ID."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT * FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_thumbnail_assets(
+    target_type: Optional[str] = None,
+    target_id: Optional[Any] = None,
+    account_id: Optional[str] = None,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """Lists thumbnail assets with optional filtering."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        q = "SELECT * FROM thumbnail_assets WHERE 1=1"
+        params = []
+        if target_type:
+            q += " AND target_type = ?"
+            params.append(target_type)
+        if target_id is not None:
+            q += " AND target_id = ?"
+            params.append(str(target_id))
+        if account_id and account_id != "all":
+            q += " AND account_id = ?"
+            params.append(account_id)
+        q += " ORDER BY is_selected DESC, created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def select_thumbnail_asset(asset_id: int, target_type: str, target_id: Any) -> bool:
+    """Designates a specific thumbnail variation as the approved active cover."""
+    init_db()
+    conn = get_db_connection()
+    t_id_str = str(target_id)
+    with conn:
+        # Get aspect ratio of the target asset
+        cur = conn.execute("SELECT aspect_ratio FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return False
+        ar = row["aspect_ratio"]
+        conn.execute("""
+            UPDATE thumbnail_assets
+            SET is_selected = 0
+            WHERE target_type = ? AND target_id = ? AND aspect_ratio = ?
+        """, (target_type, t_id_str, ar))
+        conn.execute("UPDATE thumbnail_assets SET is_selected = 1 WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+
+def delete_thumbnail_asset(asset_id: int) -> bool:
+    """Deletes a thumbnail asset and removes its local file if present."""
+    init_db()
+    conn = get_db_connection()
+    with conn:
+        cur = conn.execute("SELECT image_path FROM thumbnail_assets WHERE id = ?", (asset_id,))
+        row = cur.fetchone()
+        if row and row["image_path"] and os.path.exists(row["image_path"]):
+            try:
+                os.remove(row["image_path"])
+            except Exception:
+                pass
+        conn.execute("DELETE FROM thumbnail_assets WHERE id = ?", (asset_id,))
+    conn.close()
+    return True
+
+
 

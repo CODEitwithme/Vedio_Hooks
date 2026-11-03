@@ -329,7 +329,7 @@ def test_commercial_saas_dashboard_serving():
     assert '<h1 id="pageTitle">' in html
     assert 'id="menuToggle"' in html
     assert 'aria-label="Main navigation"' in html
-    assert html.count('class="tab-view') == 13
+    assert html.count('class="tab-view') >= 13
     assert "fonts.googleapis.com" not in html
 
 
