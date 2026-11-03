@@ -11,6 +11,9 @@ import json
 import shutil
 import re
 import subprocess
+import urllib.parse
+import ipaddress
+import socket
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -19,6 +22,78 @@ import yt_dlp
 
 DEFAULT_FFPROBE_TIMEOUT = int(os.environ.get("FFPROBE_TIMEOUT_SEC", "60"))
 DEFAULT_FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT_SEC", "300"))
+
+
+def validate_ingest_url(url: str) -> None:
+    """
+    Validates an ingestion URL to prevent SSRF (Server-Side Request Forgery) attacks.
+    Ensures URL uses HTTP/HTTPS schemes and does not target loopback, private RFC-1918,
+    link-local, cloud metadata, or reserved IP addresses.
+    """
+    if not url or not isinstance(url, str):
+        raise ValueError("URL cannot be empty")
+
+    parsed = urllib.parse.urlparse(url.strip())
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: '{parsed.scheme}'. Only HTTP and HTTPS are permitted.")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Invalid URL: missing hostname")
+
+    hostname_lower = hostname.lower()
+    blocked_hosts = {
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+        "metadata.google.internal",
+        "instance-data",
+    }
+    if (
+        hostname_lower in blocked_hosts
+        or hostname_lower.endswith(".local")
+        or hostname_lower.endswith(".internal")
+    ):
+        raise ValueError(f"Access to private or local network host '{hostname}' is prohibited.")
+
+    # Check if hostname is an IP literal
+    try:
+        ip = ipaddress.ip_address(hostname_lower)
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise ValueError(f"Access to private, loopback, or cloud metadata IP address '{hostname}' is prohibited.")
+        return
+    except ValueError as e:
+        if "prohibited" in str(e):
+            raise
+
+    # Resolve domain if reachable to check target IP
+    try:
+        addr_info = socket.getaddrinfo(hostname, None)
+        for family, socktype, proto, canonname, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            if (
+                ip.is_loopback
+                or ip.is_private
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+            ):
+                raise ValueError(f"Host '{hostname}' resolves to private/loopback/metadata IP '{ip_str}', access prohibited.")
+    except socket.gaierror:
+        # Offline or mock domain in test environment: allow if standard FQDN structure
+        if "." not in hostname or ".." in hostname:
+            raise ValueError(f"Invalid or unresolvable hostname '{hostname}'")
 
 
 def sanitize_filename(name: str) -> str:
@@ -143,6 +218,7 @@ def download_video(url: str, output_dir: str = "temp") -> Dict[str, Any]:
     Downloads a video from YouTube or supported platforms using yt-dlp.
     Selects best MP4 video up to 1080p and extracts 16kHz WAV audio.
     """
+    validate_ingest_url(url)
     os.makedirs(output_dir, exist_ok=True)
     
     ydl_opts = {

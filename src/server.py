@@ -12,6 +12,13 @@ import json
 import mimetypes
 import shutil
 import time
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
@@ -114,6 +121,7 @@ from src.multi_platform_export import generate_multi_platform_package
 from src.hardware_accel import detect_best_video_encoder, get_ffmpeg_encoding_args
 from src.watermark_engine import apply_watermark
 from src.batch_ingest import crawl_and_queue_playlist
+from src.ingest import validate_ingest_url
 from src.insights_engine import sync_post_insights, get_account_historical_performance
 from src.sentiment_palette import classify_sentiment_and_palette
 from src.dynamic_framing import reframe_dynamic_short
@@ -142,9 +150,16 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+cors_origins_env = os.environ.get("CORS_ORIGINS", "")
+allowed_origins = [orig.strip() for orig in cors_origins_env.split(",") if orig.strip()] if cors_origins_env else [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -782,13 +797,33 @@ def recover_interrupted_endpoint():
 
 @app.post("/api/storage/cleanup")
 def storage_cleanup_endpoint():
-    """Cleans up temporary wav, ass, and upload files to reclaim disk space."""
+    """Cleans up temporary wav, ass, upload, intermediate raw cuts, and cached frame files to reclaim disk space."""
     temp_dir = Path("temp")
     deleted_count = 0
     freed_bytes = 0
+    now_ts = time.time()
+    cutoff_24h = now_ts - (24 * 3600)
+
     if temp_dir.exists():
         for f in temp_dir.iterdir():
-            if f.is_file() and (f.suffix in [".wav", ".ass", ".tmp", ".log"] or f.name.endswith("_upload.mp4")):
+            if not f.is_file():
+                continue
+            name_lower = f.name.lower()
+            suffix_lower = f.suffix.lower()
+
+            # Preserve critical persistent metadata files
+            if name_lower.endswith("_transcript.json") or name_lower.endswith("_viral_clips.json") or name_lower.endswith(".db"):
+                continue
+
+            is_temp_artifact = (
+                suffix_lower in [".wav", ".ass", ".tmp", ".log"]
+                or "_raw_cut_" in name_lower
+                or "_raw_" in name_lower
+                or "_upload" in name_lower
+                or name_lower.startswith("frame_candidate_")
+                or (f.stat().st_mtime < cutoff_24h and suffix_lower not in [".json", ".db"])
+            )
+            if is_temp_artifact:
                 try:
                     size = f.stat().st_size
                     f.unlink()
@@ -859,6 +894,11 @@ def submit_url_job(req: URLProcessRequest):
     if not req.url:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
 
+    try:
+        validate_ingest_url(req.url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid URL: {str(e)}")
+
     # Duplicate prevention: check if an identical job is currently queued or in-flight
     existing_jobs = list_jobs(limit=20)
     for j in existing_jobs:
@@ -887,19 +927,51 @@ def submit_url_job(req: URLProcessRequest):
     }
 
 
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
+MAX_UPLOAD_SIZE_BYTES = 1024 * 1024 * 1024  # 1 GB
+
+
 @app.post("/api/jobs/upload")
 async def upload_file_job(file: UploadFile = File(...), account_id: Optional[str] = Form("acc_motivation")):
     """Uploads a local video file and enqueues virality analysis."""
     if is_emergency_stopped():
         raise HTTPException(status_code=423, detail="System is in EMERGENCY STOP mode. Resume automation before creating jobs.")
 
-    job_id = str(uuid.uuid4())[:8]
-    ext = Path(file.filename).suffix or ".mp4"
-    save_path = os.path.join("temp", f"{job_id}_upload{ext}")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename cannot be empty")
 
-    with open(save_path, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            f.write(chunk)
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid video format '{ext}'. Supported formats: {', '.join(sorted(ALLOWED_VIDEO_EXTENSIONS))}"
+        )
+
+    job_id = str(uuid.uuid4())[:8]
+    save_path = os.path.join("temp", f"{job_id}_upload{ext}")
+    os.makedirs("temp", exist_ok=True)
+
+    total_bytes = 0
+    try:
+        with open(save_path, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_SIZE_BYTES:
+                    raise HTTPException(status_code=413, detail="File too large. Maximum allowed size is 1GB.")
+                f.write(chunk)
+    except HTTPException:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        raise
+    except Exception as ex:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        raise HTTPException(status_code=500, detail=f"Failed to save upload: {str(ex)}")
+
+    if total_bytes == 0:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        raise HTTPException(status_code=400, detail="Uploaded video file is empty.")
 
     create_job(
         job_id=job_id,
@@ -1334,6 +1406,14 @@ def apply_watermark_endpoint(req: WatermarkApplyRequest):
 @app.post("/api/jobs/batch-playlist")
 def batch_playlist_endpoint(req: BatchIngestRequest):
     """Crawls a YouTube playlist or channel and enqueues multiple videos autonomously."""
+    if not req.playlist_url:
+        raise HTTPException(status_code=400, detail="Playlist URL cannot be empty")
+
+    try:
+        validate_ingest_url(req.playlist_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid playlist URL: {str(e)}")
+
     try:
         res = crawl_and_queue_playlist(
             playlist_url=req.playlist_url,
@@ -1640,13 +1720,21 @@ def regenerate_episode_hook_endpoint(series_id: str, episode_id: int):
         raise HTTPException(status_code=404, detail="Episode not found")
 
     series = get_series(series_id)
-    t_data = _resolve_transcript_data(series.get("job_id") if series else None)
+    ep_words = ep.get("word_boundaries") or []
+    if not ep_words:
+        try:
+            t_data = _resolve_transcript_data(series.get("job_id") if series else None)
+            all_words = extract_all_words(t_data)
+            start_t = float(ep.get("start_time", 0.0))
+            end_t = float(ep.get("end_time", start_t + 30.0))
+            ep_words = [w for w in all_words if w.get("end", 0) >= start_t and w.get("start", 0) <= end_t]
+        except Exception:
+            ep_words = []
 
-    all_words = extract_all_words(t_data)
-    start_t = float(ep.get("start_time", 0.0))
-    end_t = float(ep.get("end_time", start_t + 30.0))
-    ep_words = [w for w in all_words if w.get("end", 0) >= start_t and w.get("start", 0) <= end_t]
-    text_sample = " ".join([w.get("word", "") for w in ep_words[:12]])
+    if ep_words:
+        text_sample = " ".join([w.get("word", "") for w in ep_words[:12]])
+    else:
+        text_sample = (ep.get("main_content") or "Watch this moment carefully")[:60]
 
     new_hook = f"Part {ep.get('episode_number', 1)}: \"{text_sample}\" — Watch this carefully."
     update_series_episode(episode_id, {"opening_hook": new_hook})
@@ -1661,15 +1749,19 @@ def regenerate_episode_cliffhanger_endpoint(series_id: str, episode_id: int):
         raise HTTPException(status_code=404, detail="Episode not found")
 
     series = get_series(series_id)
-    t_data = _resolve_transcript_data(series.get("job_id") if series else None)
+    ep_words = ep.get("word_boundaries") or []
+    if not ep_words:
+        try:
+            t_data = _resolve_transcript_data(series.get("job_id") if series else None)
+            all_words = extract_all_words(t_data)
+            start_t = float(ep.get("start_time", 0.0))
+            end_t = float(ep.get("end_time", start_t + 30.0))
+            ep_words = [w for w in all_words if w.get("end", 0) >= start_t and w.get("start", 0) <= end_t]
+        except Exception:
+            ep_words = []
 
-    all_words = extract_all_words(t_data)
-    start_t = float(ep.get("start_time", 0.0))
-    end_t = float(ep.get("end_time", start_t + 30.0))
     is_final = bool(ep.get("is_final_episode", False))
-
-    ep_words = [w for w in all_words if w.get("end", 0) >= start_t and w.get("start", 0) <= end_t]
-    ep_text = " ".join([w.get("word", "") for w in ep_words])
+    ep_text = " ".join([w.get("word", "") for w in ep_words]) if ep_words else (ep.get("main_content") or "")
 
     eval_result = series_engine_instance.cliffhanger_engine.analyze_ending_window(
         window_words=ep_words,
@@ -7503,6 +7595,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
+    function onMetadataNicheChanged() {
+      const nicheSelect = document.getElementById('metaNicheSelect');
+      const niche = nicheSelect ? nicheSelect.value : 'Motivation';
+      if (activeMetadataCache) {
+        activeMetadataCache.niche = niche;
+      }
+      console.log(`[Metadata Studio] Active niche profile changed to: ${niche}`);
+    }
+
     function populateMetadataFields(meta) {
       if (!meta) return;
 
@@ -8011,6 +8112,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.querySelectorAll('.grid-crop-indicator').forEach(el => {
         el.style.display = isGridPreviewActive ? 'block' : 'none';
       });
+    }
+
+    function onThumbnailConfigChanged() {
+      const platform = document.getElementById('thumbPlatformSelect')?.value || '9:16';
+      const mode = document.getElementById('thumbModeSelect')?.value || 'auto';
+      const gridBtn = document.getElementById('btnToggleGridCrop');
+      if (gridBtn) {
+        gridBtn.style.display = platform === '9:16' ? 'inline-block' : 'none';
+      }
+      console.log(`[Thumbnail Studio] Config updated: platform=${platform}, mode=${mode}`);
     }
 
     function autoSuggestThumbnailHeadline() {

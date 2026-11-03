@@ -7,6 +7,13 @@ controlled CPU worker concurrency, and exponential backoff retry.
 import os
 import sys
 import time
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 import signal
 import threading
 import traceback

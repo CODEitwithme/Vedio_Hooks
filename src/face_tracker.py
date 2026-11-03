@@ -229,11 +229,21 @@ def render_face_tracked_short(
 
     if speaker_mode == "split_stack":
         # 2-speaker vertical split: Left speaker on top 50%, Right speaker on bottom 50%
-        crop_filter = (
-            f"[0:v]crop=w=iw/2:h=ih:x=0:y=0,scale={target_width}:{target_height // 2}:flags=lanczos[top];"
-            f"[0:v]crop=w=iw/2:h=ih:x=iw/2:y=0,scale={target_width}:{target_height // 2}:flags=lanczos[bottom];"
-            f"[top][bottom]vstack"
-        )
+        if captions_ass_path and os.path.exists(captions_ass_path):
+            safe_ass = str(Path(captions_ass_path).resolve().as_posix()).replace(":", r"\:")
+            filter_str = (
+                f"[0:v]crop=w=iw/2:h=ih:x=0:y=0,scale={target_width}:{target_height // 2}:flags=lanczos[top];"
+                f"[0:v]crop=w=iw/2:h=ih:x=iw/2:y=0,scale={target_width}:{target_height // 2}:flags=lanczos[bottom];"
+                f"[top][bottom]vstack,ass='{safe_ass}'[outv]"
+            )
+            print(f"[*] Burning captions and split-stack crop in single FFmpeg pass...")
+        else:
+            filter_str = (
+                f"[0:v]crop=w=iw/2:h=ih:x=0:y=0,scale={target_width}:{target_height // 2}:flags=lanczos[top];"
+                f"[0:v]crop=w=iw/2:h=ih:x=iw/2:y=0,scale={target_width}:{target_height // 2}:flags=lanczos[bottom];"
+                f"[top][bottom]vstack[outv]"
+            )
+        video_filter_args = ["-filter_complex", filter_str, "-map", "[outv]", "-map", "0:a?"]
     else:
         # Build crop filter with clamped X coordinates
         crop_filter = (
@@ -241,13 +251,13 @@ def render_face_tracked_short(
             f"x='clip({focal_pixel_x}-ow/2,0,iw-ow)':y=0,"
             f"scale={target_width}:{target_height}:flags=lanczos"
         )
-
-    if captions_ass_path and os.path.exists(captions_ass_path):
-        safe_ass = str(Path(captions_ass_path).resolve().as_posix()).replace(":", r"\:")
-        filter_str = f"{crop_filter},ass='{safe_ass}'"
-        print(f"[*] Burning captions and face-centered crop in single FFmpeg pass...")
-    else:
-        filter_str = crop_filter
+        if captions_ass_path and os.path.exists(captions_ass_path):
+            safe_ass = str(Path(captions_ass_path).resolve().as_posix()).replace(":", r"\:")
+            filter_str = f"{crop_filter},ass='{safe_ass}'"
+            print(f"[*] Burning captions and face-centered crop in single FFmpeg pass...")
+        else:
+            filter_str = crop_filter
+        video_filter_args = ["-vf", filter_str]
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     ffmpeg_preset = preset or DEFAULT_FFMPEG_PRESET
@@ -264,7 +274,7 @@ def render_face_tracked_short(
         "-ss", str(start_sec),
         "-to", str(end_sec),
         "-i", str(video_path),
-        "-vf", filter_str,
+        *video_filter_args,
         *optimal_enc["flags"],
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",

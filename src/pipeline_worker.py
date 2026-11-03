@@ -661,8 +661,9 @@ def render_series_episode_job(
         )
         hashtags = f"#series #part{ep_num} #shorts #reels #viral #cliffhanger"
 
+        effective_job_id = job_id or series.get("job_id")
         render_id = save_rendered_short(
-            job_id=job_id or series_id,
+            job_id=effective_job_id,
             clip_id=ep_num,
             title=f"{series.get('title')} [Part {ep_num}/{total_eps}]",
             start_time=start_t,
