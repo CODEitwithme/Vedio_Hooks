@@ -1,0 +1,20 @@
+[Unit]
+Description=VedioHooks AI - 24/7 Autonomous Background Scheduler & Pipeline Worker
+After=network.target vediohooks-web.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Vedio_Hooks
+Environment="PATH=/home/ubuntu/Vedio_Hooks/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="MAX_CONCURRENT_JOBS=2"
+ExecStart=/home/ubuntu/Vedio_Hooks/.venv/bin/python -m src.scheduler
+Restart=always
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

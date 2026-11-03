@@ -137,11 +137,13 @@ async def lifespan(app: FastAPI):
     os.makedirs("temp", exist_ok=True)
     os.makedirs("output", exist_ok=True)
     os.makedirs("models", exist_ok=True)
-    # Start 24/7 Autonomous Scheduler
-    scheduler.start()
+    # Start 24/7 Autonomous Scheduler (unless disabled via env var for standalone worker)
+    if os.environ.get("DISABLE_SERVER_SCHEDULER", "0") != "1":
+        scheduler.start()
     yield
     # Graceful stop
-    scheduler.stop(wait=False)
+    if scheduler.running:
+        scheduler.stop(wait=False)
 
 app = FastAPI(
     title="VedioHooks AI - Multi-Account Media Factory API",

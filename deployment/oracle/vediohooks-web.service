@@ -1,0 +1,19 @@
+[Unit]
+Description=VedioHooks AI - FastAPI Server & Media Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Vedio_Hooks
+Environment="PATH=/home/ubuntu/Vedio_Hooks/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/ubuntu/Vedio_Hooks/.venv/bin/uvicorn src.server:app --host 0.0.0.0 --port 8000 --workers 2
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
