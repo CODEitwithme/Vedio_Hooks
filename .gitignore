@@ -50,3 +50,9 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Live deployment & binaries
+tools/cloudflared.exe
+LIVE_URL.txt
+.DS_Store
+Thumbs.db
