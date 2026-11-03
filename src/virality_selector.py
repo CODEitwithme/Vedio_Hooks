@@ -129,6 +129,24 @@ def generate_social_metadata(text: str, hook_text: str, punchline_text: str) -> 
     return caption, hashtags
 
 
+DANGLING_CONJUNCTIONS = {"and", "so", "but", "because", "or", "also", "then", "which", "plus"}
+DANGLING_PRONOUNS = {"he", "she", "it", "they", "this", "that", "these", "those", "him", "her", "them", "his", "their", "its"}
+
+
+def is_dangling_start_segment(seg_text: str) -> bool:
+    """Detects whether a speech segment starts mid-thought without full context."""
+    clean = seg_text.strip().lower()
+    words = clean.split()
+    if not words:
+        return True
+    w0 = words[0].strip(".,!?:;\"'()[]{}")
+    if w0 in DANGLING_CONJUNCTIONS or w0 in DANGLING_PRONOUNS:
+        return True
+    if clean.startswith(("when we ", "what happened was ", "in that case ", "and that's when ", "and so ")):
+        return True
+    return False
+
+
 def evaluate_candidate_multidimensional(
     text: str,
     duration: float,
@@ -200,26 +218,51 @@ def evaluate_candidate_multidimensional(
                 dead_air_sec += gap
     dead_air_penalty = min(20, int(dead_air_sec * 5))
 
-    # 6. Standalone Context Clarity
+    # 6. Standalone Context Clarity (Deep context verification)
     context_score = 85
-    if first_8_words.startswith(("and ", "so ", "but ", "because ", "or ")):
+    first_clean = first_8_words.lower()
+
+    # Penalize dangling starters that require prior knowledge
+    if first_clean.startswith(("and ", "so ", "but ", "because ", "or ", "also ", "then ", "which ", "plus ")):
+        context_score -= 18
+    if words_list and words_list[0].lower().strip(".,!?:;\"'()[]{}") in [
+        "he", "she", "it", "they", "this", "that", "these", "those", "him", "her", "them", "his", "their", "its"
+    ]:
         context_score -= 15
-    if words_list and words_list[0].lower() in ["he", "she", "it", "they"]:
-        context_score -= 10
-    context_score = max(50, context_score)
+    if first_clean.startswith(("when we ", "what happened was ", "in that case ", "and that's when ", "and so ")):
+        context_score -= 15
+
+    # Reward explicit setup anchors, interviewer question anchors, and premise statements
+    has_question_setup = any("?" in w for w in words_list[:12]) if words_list else False
+    if has_question_setup:
+        context_score += 15
+
+    setup_phrases = (
+        "why do", "how to", "how do", "the biggest", "the secret to",
+        "if you want", "most people", "here is why", "the reason why",
+        "the truth about", "what happens when", "did you know", "someone asked me"
+    )
+    if any(sp in first_clean for sp in setup_phrases):
+        context_score += 12
+
+    context_score = min(98, max(40, context_score))
 
     # 7. Story Completeness & Punchline Quality
     ends_cleanly = text_clean.endswith((".", "!", "?"))
     last_8_words = " ".join(words_list[-8:]).lower() if words_list else ""
-    resolution_words = ["that's why", "remember", "finally", "lesson", "win", "believe", "done", "forever"]
+    resolution_words = ["that's why", "remember", "finally", "lesson", "win", "believe", "done", "forever", "result", "truth"]
     has_resolution = any(rw in last_8_words for rw in resolution_words)
-    
+
     story_score = 75
     if ends_cleanly:
         story_score += 15
+    else:
+        # Penalize mid-sentence premature cutoffs
+        story_score -= 15
+
     if has_resolution:
         story_score += 10
-    story_score = min(98, max(50, story_score))
+    story_score = min(98, max(40, story_score))
 
     # Composite Engagement Score
     engagement_score = int(0.5 * emotional_score + 0.3 * pace_score + 0.2 * curiosity_score)
@@ -341,33 +384,64 @@ def heuristic_virality_selector(
         step_stride = max(1, len(segments) // 25)  # scan through segments with stride
         
         for i in range(0, len(segments), step_stride):
-            seg_start = segments[i]["start"]
-            current_text_parts = []
-            
-            for j in range(i, len(segments)):
-                current_text_parts.append(segments[j]["text"])
+            # 1. Pre-Roll Context Expansion:
+            # Check if segment i starts mid-thought/dangling pronoun or if previous segment was an anchor question
+            start_i = i
+            if i > 0:
+                prev_text = segments[i - 1].get("text", "").strip()
+                curr_text = segments[i].get("text", "").strip()
+                # Include host question or setup anchor
+                if prev_text.endswith("?"):
+                    start_i = i - 1
+                elif is_dangling_start_segment(curr_text):
+                    start_i = i - 1
+
+            seg_start = segments[start_i]["start"]
+            best_candidate = None
+            best_score = -1.0
+
+            # 2. Multi-Window Terminal Boundary Resolution:
+            # Scan endpoints within [min_duration, max_duration] to avoid mid-sentence cuts
+            for j in range(start_i, len(segments)):
                 seg_end = segments[j]["end"]
                 duration = seg_end - seg_start
-                
+                if duration > max_duration:
+                    break
                 if duration >= min_duration:
-                    if duration <= max_duration:
-                        candidate_text = " ".join(current_text_parts)
-                        # Slice candidate words for dead air calculation
-                        cand_words = [w for w in all_words if seg_start <= w["start"] <= seg_end]
-                        eval_res = evaluate_candidate_multidimensional(candidate_text, duration, cand_words)
+                    cand_text = " ".join(s.get("text", "") for s in segments[start_i:j + 1]).strip()
+                    cand_words = [w for w in all_words if seg_start <= w.get("start", 0.0) <= seg_end]
+                    eval_res = evaluate_candidate_multidimensional(cand_text, duration, cand_words)
+
+                    seg_j_clean = segments[j].get("text", "").strip()
+                    ends_cleanly = seg_j_clean.endswith((".", "!", "?"))
+
+                    # Natural speech breath pause before next segment
+                    next_pause = 0.0
+                    if j + 1 < len(segments):
+                        next_pause = max(0.0, segments[j + 1].get("start", 0.0) - seg_end)
+
+                    cand_score = float(eval_res["overall_score"])
+                    if ends_cleanly:
+                        cand_score += 10.0  # Reward complete sentence ending
+                    if next_pause >= 0.35:
+                        cand_score += 5.0   # Reward natural speech pause
+
+                    if cand_score > best_score:
+                        best_score = cand_score
                         start_snap = snap_timestamp_to_words(seg_start, all_words, mode="start")
                         end_snap = snap_timestamp_to_words(seg_end, all_words, mode="end")
-                        
-                        candidates.append({
-                            "seg_i": i,
+                        best_candidate = {
+                            "seg_i": start_i,
                             "seg_j": j,
                             "start_time": start_snap,
                             "end_time": end_snap,
                             "duration": round(end_snap - start_snap, 2),
                             "eval": eval_res,
-                            "text": candidate_text
-                        })
-                    break
+                            "text": cand_text
+                        }
+
+            if best_candidate and best_candidate["duration"] >= min_duration:
+                candidates.append(best_candidate)
 
         # Sort candidates by virality score descending
         candidates.sort(key=lambda c: c["eval"]["overall_score"], reverse=True)
@@ -461,12 +535,16 @@ Analyze the following timestamped video transcript. Identify up to 3 self-contai
 RULES FOR VIRAL CLIPS:
 1. TARGET DURATION: Between {effective_min:.0f} and {effective_max:.0f} seconds.
 2. 3-SECOND HOOK: The clip MUST start with an attention-grabbing statement, question, surprise, or curiosity hook.
-3. SATISFYING PUNCHLINE: The clip MUST resolve cleanly with a takeaway, punchline, or realization. Do NOT cut off mid-thought or mid-sentence.
-4. EXACT TIMESTAMPS: start_time and end_time MUST strictly align with the segment timestamps provided below.
-5. VIRALITY SCORING (0-100):
+3. STANDALONE CONTEXT (CRITICAL): The clip MUST be 100% self-contained and immediately clear to a viewer who has NEVER seen the original video.
+   - NEVER start mid-sentence or with dangling pronouns ("he said...", "and then they...", "because when that happened...").
+   - If the highlight is an answer to an interviewer/host's question, INCLUDE the question at the start so the premise is crystal clear.
+   - The opening 3-5 seconds must establish WHO or WHAT the topic is about.
+4. SATISFYING PUNCHLINE & RESOLUTION: The clip MUST resolve cleanly with a full conclusion, moral, or realization. NEVER cut off mid-thought or mid-sentence.
+5. EXACT TIMESTAMPS: start_time and end_time MUST strictly align with the segment timestamps provided below.
+6. VIRALITY SCORING (0-100):
    - Hook Rating (1-10): Ability to stop the scroll in first 3s.
    - Engagement Rating (1-10): Information density or emotional resonance.
-   - Flow Rating (1-10): Clean standalone narrative arc.
+   - Flow Rating (1-10): Clean standalone narrative arc & context clarity.
    - Score = (Hook * 4) + (Engagement * 3) + (Flow * 3).
 
 TRANSCRIPT:

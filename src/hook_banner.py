@@ -67,10 +67,12 @@ BANNER_THEMES = {
 
 def generate_smart_hook_text(title: str, niche: str = "Motivation", clip_text: str = "") -> str:
     """
-    Synthesizes a high-CTR, 3-6 word scroll-stopping headline from title and niche.
+    Synthesizes a high-CTR, 3-6 word scroll-stopping headline from title, niche, and clip content.
     """
     clean_title = re.sub(r"[|\-_#].*$", "", title).strip()
-    words = clean_title.split()
+    # Strip generic prefix like "Viral Short #1:" or "Clip #1:"
+    stripped_title = re.sub(r"^(viral\s+short|clip)\s*#?\d*[:\s\-]*", "", clean_title, flags=re.IGNORECASE).strip()
+    words = stripped_title.split() if stripped_title else clean_title.split()
 
     niche_lower = niche.lower()
     if "cricket" in niche_lower:
@@ -86,11 +88,23 @@ def generate_smart_hook_text(title: str, niche: str = "Motivation", clip_text: s
         prefix = "BRUTAL TRUTH:"
         fallback = "THE 1 HABIT TO CHANGE YOUR LIFE"
 
+    # If title has >= 3 descriptive words, format as headline
     if len(words) >= 3:
         short_title = " ".join(words[:6]).upper()
         return f"{short_title}"
-    else:
-        return f"{prefix} {fallback}".upper()
+
+    # If title is short/generic, extract real context from clip_text if provided
+    if clip_text:
+        match_q = re.search(r"([^.?!]+\?)", clip_text)
+        if match_q:
+            q_words = match_q.group(1).strip().split()
+            if len(q_words) >= 3:
+                return "Q: " + " ".join(q_words[:6]).upper().rstrip("?") + "?"
+        c_words = [w for w in clip_text.split() if w.lower().strip(".,!?:;\"'") not in ["and", "so", "but", "because", "then"]]
+        if len(c_words) >= 3:
+            return " ".join(c_words[:6]).upper()
+
+    return f"{prefix} {fallback}".upper()
 
 
 def generate_hook_banner_ass_elements(

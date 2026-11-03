@@ -1311,50 +1311,49 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VedioHooks AI — Autonomous Multi-Account Media Factory</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <meta name="description" content="Create, review, and publish polished short-form videos with VedioHooks AI's video production and multi-account content studio.">
+  <meta name="theme-color" content="#0d1117">
+  <title>VedioHooks AI | Short-form Video Studio</title>
   <style>
     :root {
-      --bg: #08090d;
-      --bg-surface: #0f121a;
-      --bg-card: rgba(18, 22, 34, 0.82);
-      --bg-card-hover: rgba(26, 32, 48, 0.95);
-      --border: rgba(255, 255, 255, 0.08);
-      --border-focus: rgba(99, 102, 241, 0.5);
-      --primary: #6366f1;
-      --primary-hover: #4f46e5;
-      --primary-glow: rgba(99, 102, 241, 0.25);
-      --emerald: #10b981;
-      --amber: #f59e0b;
-      --rose: #f43f5e;
-      --cyan: #06b6d4;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --text-dim: #64748b;
-      --sidebar-w: 260px;
-      --header-h: 68px;
-      --radius-sm: 8px;
-      --radius-md: 14px;
-      --radius-lg: 20px;
+      --bg: #0b1014;
+      --bg-surface: #10171c;
+      --bg-card: #121b21;
+      --bg-card-hover: #18232a;
+      --border: rgba(203, 221, 226, 0.1);
+      --border-focus: rgba(163, 230, 53, 0.55);
+      --primary: #a3e635;
+      --primary-hover: #bef264;
+      --primary-glow: rgba(163, 230, 53, 0.16);
+      --emerald: #34d399;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --cyan: #67e8f9;
+      --text: #f2f6f5;
+      --text-muted: #a1b1b5;
+      --text-dim: #75878d;
+      --sidebar-w: 248px;
+      --header-h: 72px;
+      --radius-sm: 10px;
+      --radius-md: 16px;
+      --radius-lg: 22px;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
-    body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; display: flex; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    html { color-scheme: dark; scroll-behavior: smooth; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; display: flex; line-height: 1.5; }
 
     /* Ambient Background Mesh */
     .bg-mesh {
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none;
-      background: radial-gradient(circle at 12% 10%, rgba(99, 102, 241, 0.12) 0%, transparent 45%),
-                  radial-gradient(circle at 88% 85%, rgba(16, 185, 129, 0.08) 0%, transparent 45%),
-                  radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.04) 0%, transparent 55%);
+      background: radial-gradient(circle at 10% 0%, rgba(163, 230, 53, 0.055) 0%, transparent 36%),
+                  radial-gradient(circle at 94% 80%, rgba(34, 211, 238, 0.035) 0%, transparent 34%);
     }
 
     /* Fixed Left Sidebar */
     aside.sidebar {
       width: var(--sidebar-w); height: 100vh; position: fixed; top: 0; left: 0; z-index: 50;
-      background: #090b12; border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      background: rgba(13, 19, 23, 0.96); border-right: 1px solid var(--border); display: flex; flex-direction: column;
       backdrop-filter: blur(20px);
     }
     .sidebar-brand {
@@ -1362,12 +1361,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       border-bottom: 1px solid var(--border); text-decoration: none; color: inherit;
     }
     .sidebar-brand-icon {
-      width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #6366f1, #10b981);
+      width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #a3e635, #34d399);
       display: flex; align-items: center; justify-content: center; font-size: 1.25rem;
-      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35); flex-shrink: 0;
+      box-shadow: 0 5px 20px rgba(163, 230, 53, 0.18); flex-shrink: 0;
     }
     .sidebar-brand-title { font-size: 1.15rem; font-weight: 800; letter-spacing: -0.4px; line-height: 1.15; }
-    .sidebar-brand-title span { background: linear-gradient(135deg, #a5b4fc, #34d399); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .sidebar-brand-title span { color: var(--primary); }
     .sidebar-brand-sub { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; }
 
     .sidebar-nav { flex: 1; overflow-y: auto; padding: 1rem 0.75rem; display: flex; flex-direction: column; gap: 0.25rem; }
@@ -1378,9 +1377,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       border: 1px solid transparent; user-select: none;
     }
     .nav-item:hover { color: #fff; background: rgba(255, 255, 255, 0.04); }
-    .nav-item.active { color: #fff; background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.3); }
+    .nav-item.active { color: #fff; background: rgba(163, 230, 53, 0.1); border-color: rgba(163, 230, 53, 0.22); }
     .nav-item svg { width: 18px; height: 18px; opacity: 0.75; flex-shrink: 0; }
-    .nav-item.active svg { opacity: 1; color: #818cf8; }
+    .nav-item.active svg { opacity: 1; color: var(--primary); }
     .nav-badge { margin-left: auto; font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 9999px; background: rgba(255,255,255,0.08); color: var(--text-muted); }
 
     .sidebar-footer { padding: 1rem; border-top: 1px solid var(--border); }
@@ -1400,7 +1399,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     /* Top Header Bar */
     header.top-header {
       height: var(--header-h); position: sticky; top: 0; z-index: 40;
-      background: rgba(9, 11, 18, 0.85); backdrop-filter: blur(16px); border-bottom: 1px solid var(--border);
+      background: rgba(11, 16, 20, 0.9); backdrop-filter: blur(18px); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between; padding: 0 2rem;
     }
     .header-left { display: flex; align-items: center; gap: 1rem; }
@@ -1421,12 +1420,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .btn-emergency.active { background: #f43f5e; color: #fff; box-shadow: 0 0 16px rgba(244, 63, 94, 0.6); }
 
     .btn-primary {
-      background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: 1px solid rgba(255, 255, 255, 0.1);
+      background: var(--primary); color: #142008; border: 1px solid rgba(163, 230, 53, 0.45);
       border-radius: var(--radius-sm); padding: 0.55rem 1.15rem; font-size: 0.85rem; font-weight: 700;
-      cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 0.45rem;
-      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+      cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+      box-shadow: 0 5px 18px rgba(163, 230, 53, 0.12);
     }
-    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.45); }
+    .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(163, 230, 53, 0.2); }
     .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .btn-secondary {
@@ -1519,7 +1518,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     .modal-overlay.active { display: flex; animation: fadeIn 0.15s ease-out; }
     .modal-box {
-      background: #0f121d; border: 1px solid var(--border); border-radius: var(--radius-lg);
+      background: #11191e; border: 1px solid var(--border); border-radius: var(--radius-lg);
       width: 100%; max-width: 680px; max-height: 90vh; overflow-y: auto; padding: 2rem; box-shadow: 0 25px 50px rgba(0,0,0,0.6);
     }
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
@@ -1549,12 +1548,273 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     /* Toast */
     #toastContainer { position: fixed; bottom: 24px; right: 24px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
     .toast {
-      background: #1e2436; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.85rem 1.25rem;
+      background: #1a252b; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.85rem 1.25rem;
       color: #fff; font-size: 0.86rem; box-shadow: 0 10px 30px rgba(0,0,0,0.5); animation: fadeIn 0.2s;
+    }
+
+    .skip-link {
+      position: fixed; top: 0.75rem; left: 0.75rem; z-index: 300; padding: 0.75rem 1rem;
+      transform: translateY(-160%); background: var(--primary); color: #142008; border-radius: var(--radius-sm);
+      font-weight: 700;
+    }
+    .skip-link:focus { transform: translateY(0); }
+    .page-heading {
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem;
+      padding: 0.55rem 0 1.75rem;
+    }
+    .page-eyebrow { color: var(--primary); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.13em; text-transform: uppercase; }
+    .page-heading h1 { margin-top: 0.3rem; font-size: clamp(1.7rem, 3vw, 2.45rem); line-height: 1.15; letter-spacing: -0.055em; }
+    .page-description { margin-top: 0.45rem; color: var(--text-muted); font-size: 0.94rem; max-width: 62ch; }
+    .menu-toggle {
+      display: none; width: 42px; height: 42px; flex: 0 0 42px; align-items: center; justify-content: center;
+      border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text);
+      cursor: pointer; font-size: 1.2rem;
+    }
+    .sidebar-backdrop { display: none; }
+    .nav-item:focus-visible, button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible,
+    textarea:focus-visible, [tabindex]:focus-visible {
+      outline: 2px solid var(--primary); outline-offset: 3px;
+    }
+    .card, .metric-card, .short-card, .blueprint-card {
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+    }
+    .card { border-color: rgba(203, 221, 226, 0.09); }
+    .metric-card { border-color: rgba(203, 221, 226, 0.1); transition: border-color 0.18s, transform 0.18s; }
+    .metric-card:hover { border-color: rgba(163, 230, 53, 0.25); transform: translateY(-2px); }
+    .metric-value { letter-spacing: -0.06em; }
+    .card-title { letter-spacing: -0.025em; }
+    .table-container { border-color: var(--border); }
+    th { white-space: nowrap; }
+    .badge-primary { background: rgba(163, 230, 53, 0.1); color: #d9f99d; border-color: rgba(163, 230, 53, 0.24); }
+    .short-card:hover { border-color: rgba(163, 230, 53, 0.4); }
+    .blueprint-card { background: #111a1f; border-color: rgba(163, 230, 53, 0.22); }
+    .blueprint-key { color: #bef264; }
+    [style*="#a5b4fc"], [style*="#818cf8"] { color: #bef264 !important; }
+    .btn-primary[style*="background"] { background: var(--primary) !important; color: #142008 !important; }
+    #factoryHookBannerRow { background: rgba(163, 230, 53, 0.045) !important; border-color: rgba(163, 230, 53, 0.2) !important; }
+    select option { background: #111a1f; color: var(--text); }
+    .form-input, .form-select, .form-textarea { min-height: 44px; }
+    .btn-primary, .btn-secondary, .btn-danger, .btn-emergency { min-height: 42px; }
+    .btn-secondary:hover { border-color: rgba(163, 230, 53, 0.24); }
+    .short-card:hover { border-color: rgba(163, 230, 53, 0.35); }
+    .view-container { max-width: 1520px; padding: 1.75rem clamp(1rem, 2.8vw, 2.5rem) 3rem; }
+    .grid-3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+
+    @media (max-width: 1100px) {
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); }
+      .menu-toggle { display: inline-flex; }
+      aside.sidebar {
+        display: flex; width: min(86vw, 300px); transform: translateX(-105%);
+        transition: transform 0.22s ease; z-index: 120;
+      }
+      body.sidebar-open aside.sidebar { transform: translateX(0); }
+      .sidebar-backdrop {
+        display: block; position: fixed; inset: 0; z-index: 110; background: rgba(0, 0, 0, 0.58);
+        opacity: 0; visibility: hidden; transition: opacity 0.2s, visibility 0.2s;
+      }
+      body.sidebar-open .sidebar-backdrop { opacity: 1; visibility: visible; }
+      main.main-content { margin-left: 0; width: 100%; }
+      header.top-header { padding: 0 1.25rem; }
+      .header-right { gap: 0.6rem; }
+      .account-selector { max-width: 270px; }
+      #activeNicheBadge, #hwAccelBadge { display: none !important; }
+    }
+    @media (max-width: 900px) {
+      .menu-toggle { display: inline-flex; }
+      aside.sidebar {
+        display: flex; width: min(86vw, 300px); transform: translateX(-105%);
+        transition: transform 0.22s ease; z-index: 120;
+      }
+      body.sidebar-open aside.sidebar { transform: translateX(0); }
+      .sidebar-backdrop {
+        display: block; position: fixed; inset: 0; z-index: 110; background: rgba(0, 0, 0, 0.58);
+        opacity: 0; visibility: hidden; transition: opacity 0.2s, visibility 0.2s;
+      }
+      body.sidebar-open .sidebar-backdrop { opacity: 1; visibility: visible; }
+      main.main-content { margin-left: 0; width: 100%; }
+      .header-left { min-width: 0; }
+      .account-selector { max-width: 290px; }
+    }
+    @media (max-width: 640px) {
+      :root { --header-h: 64px; }
+      header.top-header { height: auto; min-height: var(--header-h); padding: 0.65rem 0.85rem; gap: 0.65rem; }
+      .header-left { flex: 1; gap: 0.55rem; }
+      .account-selector { width: min(47vw, 220px); padding: 0.55rem 0.5rem; font-size: 0.76rem; }
+      #activeNicheBadge, #hwAccelBadge { display: none !important; }
+      .header-right { gap: 0.45rem; }
+      .btn-emergency { min-height: 40px; padding: 0.4rem 0.55rem; font-size: 0.67rem; }
+      .header-right > .btn-primary { min-height: 40px; padding: 0.45rem 0.65rem; font-size: 0.76rem; white-space: nowrap; }
+      .menu-toggle { width: 38px; height: 40px; flex-basis: 38px; }
+      .view-container { padding: 1.1rem 0.85rem 2rem; }
+      .page-heading { align-items: flex-start; padding: 0.3rem 0 1.2rem; }
+      .page-heading h1 { font-size: 1.8rem; }
+      .page-description { font-size: 0.87rem; }
+      .grid-4, .grid-2, .grid-3, .blueprint-grid { grid-template-columns: minmax(0, 1fr); gap: 0.8rem; }
+      .metric-card { padding: 1rem 1.1rem; }
+      .metric-value { font-size: 1.8rem; }
+      .card { padding: 1.1rem; margin-bottom: 1rem; }
+      .card-header { align-items: flex-start; flex-wrap: wrap; gap: 0.85rem; }
+      .card-header > * { min-width: 0; }
+      .card-header > button, .card-header > div + div { max-width: 100%; }
+      .form-row { flex-direction: column; gap: 0; }
+      .form-row > * { width: 100%; }
+      .shorts-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 0.85rem; }
+      .blueprint-grid { grid-template-columns: minmax(0, 1fr); }
+      .modal-overlay { padding: 0.75rem; align-items: flex-end; }
+      .modal-box { max-height: 92dvh; padding: 1.25rem; border-radius: 18px 18px 12px 12px; }
+      #toastContainer { right: 0.75rem; bottom: 0.75rem; left: 0.75rem; }
+      .toast { font-size: 0.82rem; }
+    }
+    @media (max-width: 380px) {
+      .btn-emergency { font-size: 0; gap: 0; }
+      .btn-emergency::after { content: "STOP"; font-size: 0.68rem; }
+      .header-right > .btn-primary { font-size: 0.7rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+
+    :root {
+      --bg: #0d1117;
+      --bg-surface: #111820;
+      --bg-card: #151d26;
+      --bg-card-hover: #1b2631;
+      --border: rgba(190, 205, 220, 0.12);
+      --border-focus: rgba(190, 242, 100, 0.7);
+      --primary: #bef264;
+      --primary-hover: #d9f99d;
+      --primary-glow: rgba(190, 242, 100, 0.18);
+      --text: #f3f6fa;
+      --text-muted: #aab7c4;
+      --text-dim: #8493a1;
+      --sidebar-w: 264px;
+      --radius-sm: 10px;
+      --radius-md: 16px;
+      --radius-lg: 22px;
+      color-scheme: dark;
+    }
+
+    html { background: var(--bg); }
+    body { background: var(--bg); color: var(--text); }
+    .bg-mesh {
+      background:
+        radial-gradient(ellipse at 68% -12%, rgba(190, 242, 100, 0.075), transparent 38%),
+        radial-gradient(ellipse at 100% 65%, rgba(56, 189, 248, 0.035), transparent 32%);
+    }
+    aside.sidebar {
+      background: rgba(15, 21, 28, 0.97);
+      border-right-color: rgba(190, 205, 220, 0.11);
+      box-shadow: 12px 0 32px rgba(0, 0, 0, 0.12);
+    }
+    .sidebar-brand { min-height: var(--header-h); }
+    .sidebar-brand-sub { margin-top: 0.2rem; }
+    .sidebar-nav { gap: 0.3rem; padding: 1.15rem 0.85rem; }
+    .nav-group-label {
+      padding: 1.05rem 0.7rem 0.4rem;
+      color: #91a0ad;
+      letter-spacing: 0.1em;
+    }
+    .nav-item {
+      min-height: 42px;
+      border-radius: 11px;
+      color: #bdc8d2;
+      transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+    }
+    .nav-item:hover { background: rgba(255, 255, 255, 0.065); color: #fff; }
+    .nav-item.active {
+      background: rgba(190, 242, 100, 0.11);
+      border-color: rgba(190, 242, 100, 0.24);
+      color: #f7ffe8;
+    }
+    .nav-item.active svg { color: var(--primary); }
+    .system-status-pill { background: rgba(255, 255, 255, 0.035); }
+    header.top-header {
+      background: rgba(13, 17, 23, 0.92);
+      border-bottom-color: var(--border);
+      padding-inline: clamp(1rem, 3vw, 2.5rem);
+    }
+    .account-selector {
+      min-height: 42px;
+      background: #151d26;
+      color: var(--text);
+    }
+    .view-container {
+      min-width: 0;
+      max-width: 1560px;
+      padding-top: clamp(1.6rem, 3vw, 2.6rem);
+    }
+    .page-heading { padding-bottom: 2rem; }
+    .page-eyebrow { color: var(--primary); letter-spacing: 0.15em; }
+    .page-heading h1 { font-weight: 760; }
+    .page-description { color: var(--text-muted); line-height: 1.65; }
+    .card, .metric-card, .short-card, .blueprint-card {
+      border-color: var(--border);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.16);
+    }
+    .card { background: linear-gradient(145deg, #161f29, #141c25); }
+    .metric-card {
+      min-width: 0;
+      background: linear-gradient(145deg, #18222d, #141c25);
+      gap: 0.65rem;
+    }
+    .metric-label { color: #b7c3ce; letter-spacing: 0.07em; }
+    .metric-detail { color: var(--text-dim); line-height: 1.5; }
+    .metric-value { color: #f6f8fb; }
+    .card-title { color: #f2f6fa; }
+    .card-subtitle { color: var(--text-muted); line-height: 1.55; }
+    .btn-primary {
+      color: #19220f;
+      box-shadow: 0 5px 18px rgba(190, 242, 100, 0.12);
+    }
+    .btn-secondary {
+      background: #1a242e;
+      color: #d9e2eb;
+    }
+    .btn-secondary:hover { background: #222f3b; color: #fff; }
+    .form-input, .form-select, .form-textarea {
+      background: #10171e;
+      color: var(--text);
+    }
+    .form-label { color: #c6d1da; }
+    .table-container { max-width: 100%; }
+    .shorts-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); }
+    .blueprint-card { background: #151e28; }
+    .toast { background: #202b35; }
+    .page-heading h1, .page-description, .card-title, .card-subtitle,
+    .metric-label, .metric-detail, td, th { overflow-wrap: anywhere; }
+    :focus-visible { outline-color: var(--primary); }
+
+    @media (max-width: 1100px) {
+      .view-container { padding-inline: clamp(1rem, 3.5vw, 2rem); }
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      header.top-header { flex-wrap: wrap; }
+      .header-left { flex: 1 1 100%; }
+      .header-right { width: 100%; justify-content: flex-end; }
+      .menu-toggle { margin-right: auto; }
+      .view-container { padding: 1.35rem 1rem 2rem; }
+      .page-heading { padding-bottom: 1.35rem; }
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+      .metric-card { padding: 0.95rem; }
+      .metric-label { font-size: 0.7rem; }
+      .metric-value { font-size: 1.7rem; }
+      .metric-detail { font-size: 0.72rem; }
+      .card { padding: 1.15rem; }
+      .shorts-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); }
+    }
+    @media (max-width: 420px) {
+      .grid-4 { grid-template-columns: minmax(0, 1fr); }
+      .header-right { justify-content: space-between; }
+      .account-selector { width: calc(100vw - 5.2rem); max-width: none; }
+      .btn-emergency { padding-inline: 0.55rem; }
+      .header-right > .btn-primary { padding-inline: 0.7rem; }
     }
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">Skip to content</a>
   <div class="bg-mesh"></div>
 
   <!-- Left Sidebar -->
@@ -1567,66 +1827,66 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </a>
 
-    <nav class="sidebar-nav">
+    <nav class="sidebar-nav" id="sidebarNav" aria-label="Main navigation">
       <div class="nav-group-label">Core Operations</div>
-      <div class="nav-item active" onclick="switchTab('overview')">
+      <div class="nav-item active" role="button" tabindex="0" aria-current="page" onclick="switchTab('overview')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
         Overview
       </div>
-      <div class="nav-item" onclick="switchTab('factory')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('factory')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
         Video Factory
         <span class="nav-badge" id="navJobsBadge">0</span>
       </div>
-      <div class="nav-item" onclick="switchTab('library')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('library')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
         Video Library
       </div>
-      <div class="nav-item" onclick="switchTab('dubbing')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('dubbing')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
         AI Dubbing Lab
         <span class="nav-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);">NEW</span>
       </div>
 
       <div class="nav-group-label">Multi-Account & Strategy</div>
-      <div class="nav-item" onclick="switchTab('accounts')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('accounts')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
         Account Manager
       </div>
-      <div class="nav-item" onclick="switchTab('ai-director')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('ai-director')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
         AI Content Director
       </div>
-      <div class="nav-item" onclick="switchTab('sources')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('sources')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
         Content Discovery
       </div>
 
       <div class="nav-group-label">Publishing & Meta</div>
-      <div class="nav-item" onclick="switchTab('calendar')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('calendar')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         Publishing Calendar
         <span class="nav-badge" id="navDraftsBadge">0</span>
       </div>
-      <div class="nav-item" onclick="switchTab('instagram')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('instagram')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         Instagram Graph API
       </div>
-      <div class="nav-item" onclick="switchTab('analytics')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('analytics')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         Analytics
       </div>
 
       <div class="nav-group-label">System Control</div>
-      <div class="nav-item" onclick="switchTab('automation')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('automation')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
         Automation Centre
       </div>
-      <div class="nav-item" onclick="switchTab('health')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('health')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         System Health
       </div>
-      <div class="nav-item" onclick="switchTab('settings')">
+      <div class="nav-item" role="button" tabindex="0" onclick="switchTab('settings')">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
         Settings
       </div>
@@ -1642,12 +1902,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
   </aside>
+  <div class="sidebar-backdrop" onclick="setMobileNav(false)" aria-hidden="true"></div>
 
   <!-- Main Content Body -->
-  <main class="main-content">
+  <main class="main-content" id="mainContent">
     <!-- Top Sticky Header -->
     <header class="top-header">
       <div class="header-left">
+        <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open navigation menu" aria-controls="sidebarNav" aria-expanded="false" onclick="setMobileNav()">☰</button>
         <select id="globalAccountSelect" class="account-selector" onchange="onGlobalAccountChange(this.value)">
           <option value="all">🌐 All Accounts (Global View)</option>
         </select>
@@ -1671,6 +1933,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <!-- Main Workspace Container -->
     <div class="view-container">
+      <div class="page-heading">
+        <div>
+          <p class="page-eyebrow">VIDEO CONTENT STUDIO</p>
+          <h1 id="pageTitle">Your content, in motion.</h1>
+          <p class="page-description" id="pageDescription">Turn long-form video into standout short-form content, all from one workspace.</p>
+        </div>
+      </div>
 
       <!-- TAB 1: OVERVIEW -->
       <section id="tab-overview" class="tab-view active">
@@ -2722,20 +2991,64 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
+    function setMobileNav(open = !document.body.classList.contains('sidebar-open')) {
+      document.body.classList.toggle('sidebar-open', open);
+      const toggle = document.getElementById('menuToggle');
+      const mobile = window.matchMedia('(max-width: 1100px)').matches;
+      const sidebar = document.querySelector('.sidebar');
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+      sidebar.setAttribute('aria-hidden', String(mobile && !open));
+      if (mobile && open) sidebar.querySelector('.nav-item')?.focus();
+      else if (mobile && toggle && sidebar.contains(document.activeElement)) toggle.focus();
+    }
+
     // Tab Navigation
-    function switchTab(tabId) {
+    function switchTab(tabId, updateHistory = true) {
+      const targetView = document.getElementById(`tab-${tabId}`);
+      if (!targetView) return;
+
       document.querySelectorAll('.tab-view').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(el => el.removeAttribute('aria-current'));
 
-      const targetView = document.getElementById(`tab-${tabId}`);
-      if (targetView) targetView.classList.add('active');
+      targetView.classList.add('active');
 
       const navItems = document.querySelectorAll('.sidebar-nav .nav-item');
       navItems.forEach(item => {
         if (item.getAttribute('onclick') && item.getAttribute('onclick').includes(tabId)) {
           item.classList.add('active');
+          item.setAttribute('aria-current', 'page');
         }
       });
+
+      const pageContent = {
+        overview: ['Your content, in motion.', 'Turn long-form video into standout short-form content, all from one workspace.'],
+        factory: ['Video factory', 'Bring in a video and shape it into polished, platform-ready shorts.'],
+        library: ['Your video library', 'Review, refine, and prepare your finished vertical videos for publishing.'],
+        dubbing: ['AI dubbing lab', 'Create localized voice tracks and manage dubbed versions of your shorts.'],
+        accounts: ['Account manager', 'Keep each channel’s brand, schedule, and publishing workflow organized.'],
+        'ai-director': ['AI content director', 'Build a practical content blueprint around your niche and audience.'],
+        sources: ['Content discovery', 'Organize the channels, playlists, and ideas that feed your content pipeline.'],
+        calendar: ['Publishing calendar', 'Review drafts and coordinate what is ready to publish across accounts.'],
+        instagram: ['Instagram integration', 'Manage your official Instagram publishing connection and account insights.'],
+        analytics: ['Performance analytics', 'Understand how your clips and account workflows are performing.'],
+        automation: ['Automation centre', 'Monitor the background workflows that keep your content moving.'],
+        health: ['System health', 'Check the services and resources powering your video workspace.'],
+        settings: ['Workspace settings', 'Manage system preferences, maintenance, and configuration.']
+      };
+      const [title, description] = pageContent[tabId];
+      document.getElementById('pageTitle').textContent = title;
+      document.getElementById('pageDescription').textContent = description;
+      document.title = `${title} | VedioHooks AI`;
+      document.querySelector('meta[name="description"]').setAttribute('content', description);
+      targetView.setAttribute('aria-hidden', 'false');
+      document.querySelectorAll('.tab-view:not(.active)').forEach(view => view.setAttribute('aria-hidden', 'true'));
+      setMobileNav(false);
+
+      if (updateHistory && window.location.hash !== `#${tabId}`) {
+        window.history.pushState({ tabId }, '', `#${tabId}`);
+      }
 
       // Tab specific refresh
       if (tabId === 'overview') loadOverview();
@@ -4778,10 +5091,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     // Auto-initialize on load
     window.addEventListener('DOMContentLoaded', async () => {
+      document.querySelectorAll('.sidebar-nav .nav-item').forEach(item => {
+        item.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            item.click();
+          }
+        });
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') setMobileNav(false);
+      });
+      window.addEventListener('resize', () => setMobileNav(false));
+      window.addEventListener('popstate', () => {
+        switchTab(window.location.hash.slice(1) || 'overview', false);
+      });
+
       await loadAccountsList();
       await checkAutomationStatus();
       checkHardwareAccel();
-      loadOverview();
+      const requestedTab = window.location.hash.slice(1);
+      switchTab(document.getElementById(`tab-${requestedTab}`) ? requestedTab : 'overview', false);
 
       // Background telemetry sync every 5 seconds
       setInterval(() => {

@@ -167,3 +167,65 @@ def test_media_streaming_range():
     assert res_range.status_code == 206
     assert "Content-Range" in res_range.headers
     assert res_range.headers["Content-Length"] == "1025"
+
+
+def test_context_clarity_and_dangling_detection():
+    """Verifies standalone context clarity evaluation and dangling speech detection."""
+    from src.virality_selector import is_dangling_start_segment, evaluate_candidate_multidimensional
+
+    # Dangling indicators
+    assert is_dangling_start_segment("and that's why we had to do it") is True
+    assert is_dangling_start_segment("he told me that he would not sign") is True
+    assert is_dangling_start_segment("because when we tried that") is True
+    assert is_dangling_start_segment("so they decided to leave") is True
+
+    # Standalone setups
+    assert is_dangling_start_segment("Why do 99% of people quit in their first year?") is False
+    assert is_dangling_start_segment("The biggest mistake most founders make is ignoring retention.") is False
+
+    # Context score evaluation
+    eval_setup = evaluate_candidate_multidimensional(
+        "Why do 99% of people fail to achieve their dreams? Because they fear hard work. You must fight through the pain.",
+        duration=15.0
+    )
+    assert eval_setup["context_score"] >= 85
+
+    eval_dangling = evaluate_candidate_multidimensional(
+        "and so he told them that it was over and they could not do anything about it anymore",
+        duration=15.0
+    )
+    assert eval_dangling["context_score"] < eval_setup["context_score"]
+
+
+def test_heuristic_pre_roll_backward_expansion():
+    """Verifies that heuristic_virality_selector rolls back to include host question anchor."""
+    from src.virality_selector import heuristic_virality_selector
+
+    mock_transcript = {
+        "duration": 50.0,
+        "full_text": "Interviewer: What was the pivotal moment in your career? Speaker: When I lost my job I realized I had to build my own business. That changed everything forever.",
+        "segments": [
+            {"start": 0.0, "end": 6.0, "text": "What was the pivotal moment in your career?"},
+            {"start": 6.2, "end": 18.0, "text": "When I lost my job I realized I had to build my own business."},
+            {"start": 18.2, "end": 28.0, "text": "That changed everything forever and we never looked back."}
+        ]
+    }
+    rep = heuristic_virality_selector(mock_transcript, min_duration=10.0, max_duration=35.0)
+    assert len(rep.clips) >= 1
+    top_clip = rep.clips[0]
+    # Verify that the clip started at 0.0s to include the question anchor
+    assert top_clip.start_time <= 1.0
+    assert "pivotal moment" in top_clip.full_quote.lower() or "what was" in top_clip.full_quote.lower()
+
+
+def test_smart_hook_context_extraction_from_clip():
+    """Verifies smart context banner extraction from clip questions and keywords."""
+    from src.hook_banner import generate_smart_hook_text
+
+    banner = generate_smart_hook_text(
+        title="Viral Short #1: Clip",
+        niche="Motivation",
+        clip_text="Why do 99% of people fail at their dreams? Because they give up early."
+    )
+    assert "WHY DO 99%" in banner or "FAIL" in banner
+

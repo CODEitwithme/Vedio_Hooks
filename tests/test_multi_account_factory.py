@@ -311,7 +311,7 @@ def test_maintenance_and_telemetry_endpoints():
 
 
 def test_commercial_saas_dashboard_serving():
-    """Verifies that the enhanced Commercial SaaS dashboard loads all 12 operational views."""
+    """Verifies that the enhanced dashboard loads all 13 operational views."""
     res = client.get("/")
     assert res.status_code == 200
     assert "text/html" in res.headers["content-type"]
@@ -325,6 +325,12 @@ def test_commercial_saas_dashboard_serving():
     assert "Publishing Calendar" in html
     assert "EMERGENCY STOP" in html
     assert "Official Meta Instagram Graph API" in html
+    assert '<meta name="description"' in html
+    assert '<h1 id="pageTitle">' in html
+    assert 'id="menuToggle"' in html
+    assert 'aria-label="Main navigation"' in html
+    assert html.count('class="tab-view') == 13
+    assert "fonts.googleapis.com" not in html
 
 
 def test_auto_emoji_and_kinetic_subtitles():
@@ -1289,8 +1295,6 @@ def test_weekly_executive_report_generation():
     res = client.get("/api/reports/weekly?account_id=all")
     assert res.status_code == 200
     assert "markdown_report" in res.json()
-
-
 
 
 

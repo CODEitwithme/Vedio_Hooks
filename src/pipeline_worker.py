@@ -201,7 +201,25 @@ def render_short_job(
     if enable_jumpcuts:
         jumpcut_segments, active_words = calculate_jumpcuts(sliced_sub["words"], max_silence_sec=0.35)
 
-    # Step B: Create Alex Hormozi Karaoke ASS file (with optional Top Hook Banner)
+    # Step B: Create Alex Hormozi Karaoke ASS file (with Context Top Hook Banner)
+    if not hook_banner_text:
+        try:
+            from src.hook_banner import generate_smart_hook_text
+            from src.db import get_account
+            account_niche = "Motivation"
+            account_id = job.get("account_id")
+            if account_id:
+                acc = get_account(account_id)
+                if acc:
+                    account_niche = acc.get("niche", "Motivation")
+            hook_banner_text = generate_smart_hook_text(
+                title=title or job.get("title", "VIRAL HIGHLIGHT"),
+                niche=account_niche,
+                clip_text=target_clip.get("full_quote", "") or target_clip.get("hook_text", "")
+            )
+        except Exception as banner_err:
+            print(f"[!] Warning synthesizing auto context hook banner: {banner_err}")
+
     create_ass_subtitles(
         words_data=active_words,
         output_ass_path=ass_path,
