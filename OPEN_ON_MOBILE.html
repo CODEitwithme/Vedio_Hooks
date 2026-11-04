@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VedioHooks AI - Open on Mobile</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #f0f6fc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 1.5rem;
+      box-sizing: border-box;
+      text-align: center;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      padding: 2rem;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+    }
+    h1 {
+      font-size: 1.6rem;
+      margin-top: 0;
+      color: #a3e635;
+    }
+    p {
+      color: #8b949e;
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+    }
+    .qr-box {
+      background: white;
+      padding: 1rem;
+      border-radius: 12px;
+      display: inline-block;
+      margin-bottom: 1.5rem;
+    }
+    .qr-box img {
+      display: block;
+      width: 220px;
+      height: 220px;
+    }
+    .btn {
+      display: block;
+      background: #a3e635;
+      color: #0d1117;
+      text-decoration: none;
+      font-weight: 700;
+      padding: 0.85rem 1.25rem;
+      border-radius: 10px;
+      margin-bottom: 0.85rem;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+    .btn:hover {
+      background: #bef264;
+    }
+    .btn-secondary {
+      background: #21262d;
+      color: #58a6ff;
+      border: 1px solid #30363d;
+    }
+    .btn-secondary:hover {
+      background: #30363d;
+    }
+    .note {
+      font-size: 0.8rem;
+      color: #6e7681;
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📱 Open VedioHooks AI on Mobile</h1>
+    <p>Scan this QR code with your phone camera or click one of the links below:</p>
+    
+    <div class="qr-box">
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Fmary-measured-ste-void.trycloudflare.com" alt="Mobile QR Code">
+    </div>
+
+    <a href="https://mary-measured-ste-void.trycloudflare.com" class="btn" target="_blank">
+      🌐 Open Public HTTPS URL (Any Network)
+    </a>
+
+    <a href="http://192.168.29.155:8000" class="btn btn-secondary" target="_blank">
+      📶 Open Local Wi-Fi URL (Fast LAN)
+    </a>
+
+    <div class="note">
+      Connected &amp; Verified. Real-time background processing active.
+    </div>
+  </div>
+</body>
+</html>

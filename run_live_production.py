@@ -6,6 +6,7 @@ via an encrypted Cloudflare Tunnel with zero configuration required.
 
 import os
 import sys
+import socket
 
 # Ensure UTF-8 output on Windows console
 if sys.platform == "win32":
@@ -27,6 +28,17 @@ ROOT_DIR = Path(__file__).resolve().parent
 TOOLS_DIR = ROOT_DIR / "tools"
 CLOUDFLARED_EXE = TOOLS_DIR / "cloudflared.exe"
 LIVE_URL_FILE = ROOT_DIR / "LIVE_URL.txt"
+
+def get_local_ip() -> str:
+    """Returns local LAN IP (e.g. 192.168.x.x) for phone on same Wi-Fi."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 def ensure_cloudflared() -> str:
     if not CLOUDFLARED_EXE.exists() or CLOUDFLARED_EXE.stat().st_size < 1000000:
@@ -64,16 +76,17 @@ def main():
     print("=" * 72)
 
     cf_exe = ensure_cloudflared()
+    local_ip = get_local_ip()
 
     # 1. Clean up stale port 8000
     stop_existing_port_8000()
 
-    # 2. Start Uvicorn Server in background
+    # 2. Start Uvicorn Server on 0.0.0.0 (all interfaces) so LAN & tunnel both work
     server_cmd = [
         sys.executable,
         "-m", "uvicorn",
         "src.server:app",
-        "--host", "127.0.0.1",
+        "--host", "0.0.0.0",
         "--port", "8000"
     ]
     server_proc = subprocess.Popen(
@@ -126,20 +139,25 @@ def main():
         server_proc.terminate()
         sys.exit(1)
 
-    # Save active URL to file
+    # Save active URLs to file
     with open(LIVE_URL_FILE, "w", encoding="utf-8") as f:
-        f.write(tunnel_url.strip() + "\n")
+        f.write(f"PUBLIC_URL={tunnel_url}\n")
+        f.write(f"WIFI_URL=http://{local_ip}:8000\n")
+        f.write(f"LOCAL_URL=http://localhost:8000\n")
 
     print("\n" + "=" * 72)
-    print(" [+] YOUR VEDIOHOOKS AI FACTORY IS LIVE AND ACCESSIBLE WORLDWIDE!")
+    print(" [+] YOUR VEDIOHOOKS AI FACTORY IS LIVE AND READY FOR MOBILE & WEB!")
     print("=" * 72)
-    print(f" [>] Public HTTPS URL:    {tunnel_url}")
-    print(f" [>] Local Dashboard:     http://localhost:8000")
-    print(f" [>] Interactive API:     {tunnel_url}/docs")
-    print(f" [>] System Telemetry:    {tunnel_url}/api/system/stats")
+    print(f" [>] Public HTTPS (Any Phone / Mobile Data):")
+    print(f"     {tunnel_url}")
+    print()
+    print(f" [>] Local Wi-Fi (Phones on Same Wi-Fi):")
+    print(f"     http://{local_ip}:8000")
+    print()
+    print(f" [>] PC Local Dashboard:")
+    print(f"     http://localhost:8000")
     print("=" * 72)
-    print(" [*] Anyone with this link can use the app from any device or phone.")
-    print(" [*] Running 24/7 in background. Press Ctrl+C in this window to stop.\n")
+    print(" [*] Running 24/7 in background. Press Ctrl+C to stop.\n")
 
     # Keep running until Ctrl+C
     def cleanup(signum, frame):

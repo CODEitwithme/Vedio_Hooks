@@ -10,3 +10,4 @@ if exist ".venv\Scripts\python.exe" (
     python run_live_production.py
 )
 pause
+
