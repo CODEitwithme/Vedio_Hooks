@@ -133,6 +133,16 @@ def main():
             tunnel_url = match.group(0)
             break
 
+    # Drain remaining output in background thread to prevent buffer deadlock
+    import threading
+    def drain_pipe():
+        try:
+            for _ in cf_proc.stdout:
+                pass
+        except Exception:
+            pass
+    threading.Thread(target=drain_pipe, daemon=True).start()
+
     if not tunnel_url:
         print("[-] Could not establish Cloudflare Tunnel.")
         cf_proc.terminate()
@@ -144,6 +154,18 @@ def main():
         f.write(f"PUBLIC_URL={tunnel_url}\n")
         f.write(f"WIFI_URL=http://{local_ip}:8000\n")
         f.write(f"LOCAL_URL=http://localhost:8000\n")
+
+    # Automatically keep OPEN_ON_MOBILE.html QR code in sync
+    mobile_html_file = ROOT_DIR / "OPEN_ON_MOBILE.html"
+    if mobile_html_file.exists():
+        try:
+            import urllib.parse
+            html_content = mobile_html_file.read_text(encoding="utf-8")
+            html_content = re.sub(r"https%3A%2F%2F[a-zA-Z0-9-]+\.trycloudflare\.com", urllib.parse.quote(tunnel_url, safe=''), html_content)
+            html_content = re.sub(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", tunnel_url, html_content)
+            mobile_html_file.write_text(html_content, encoding="utf-8")
+        except Exception:
+            pass
 
     print("\n" + "=" * 72)
     print(" [+] YOUR VEDIOHOOKS AI FACTORY IS LIVE AND READY FOR MOBILE & WEB!")
