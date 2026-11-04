@@ -1094,7 +1094,7 @@ def send_render_to_draft_endpoint(render_id: int):
     return {"status": "created", "publishing_id": new_pub_id, "message": "Short successfully queued to Instagram drafts."}
 
 
-@app.get("/api/media/{folder}/{filename}")
+@app.get("/api/media/{folder}/{filename:path}")
 def stream_media(folder: str, filename: str, request: Request):
     """Streams a video or audio file with strict path traversal security checks."""
     if folder not in ["temp", "output"]:
@@ -2335,6 +2335,18 @@ def generate_thumbnails_endpoint(req: ThumbnailGenerateRequest):
     }
 
 
+@app.get("/api/thumbnails/{asset_id:int}/image")
+def stream_thumbnail_image_endpoint(asset_id: int):
+    """Streams a high-resolution JPG thumbnail image file."""
+    asset = get_thumbnail_asset(asset_id)
+    if not asset or not asset.get("image_path"):
+        raise HTTPException(status_code=404, detail="Thumbnail asset not found")
+    p = Path(asset["image_path"])
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail image file missing from disk")
+    return FileResponse(str(p), media_type="image/jpeg")
+
+
 @app.get("/api/thumbnails/{target_type}/{target_id}")
 def list_thumbnails_endpoint(target_type: str, target_id: str):
     """Retrieves all generated thumbnail variations for a target."""
@@ -2349,18 +2361,6 @@ def select_thumbnail_endpoint(asset_id: int, req: ThumbnailSelectRequest):
     if not success:
         raise HTTPException(status_code=404, detail="Thumbnail asset not found")
     return {"success": True, "selected_asset_id": asset_id}
-
-
-@app.get("/api/thumbnails/{asset_id}/image")
-def stream_thumbnail_image_endpoint(asset_id: int):
-    """Streams a high-resolution JPG thumbnail image file."""
-    asset = get_thumbnail_asset(asset_id)
-    if not asset or not asset.get("image_path"):
-        raise HTTPException(status_code=404, detail="Thumbnail asset not found")
-    p = Path(asset["image_path"])
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="Thumbnail image file missing from disk")
-    return FileResponse(str(p), media_type="image/jpeg")
 
 
 @app.post("/api/thumbnails/extract-frames")
@@ -5483,7 +5483,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div style="display: grid; grid-template-columns: minmax(260px, 300px) 1fr; gap: 1.5rem; align-items: start;">
               <!-- 9:16 Video Player -->
               <div style="background: #000; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 8px 24px rgba(0,0,0,0.6);">
-                <video id="video-hero-${topRender.id}" src="/api/media/output/${filename}" controls playsinline preload="auto" style="width: 100%; height: auto; max-height: 480px; display: block;"></video>
+                <video id="video-hero-${topRender.id}" src="/api/media/output/${filename}" poster="/api/renders/${topRender.id}/thumbnail" controls playsinline preload="auto" style="width: 100%; height: auto; max-height: 480px; display: block;"></video>
               </div>
 
               <!-- Metadata, Waveform & Publish Controls -->
@@ -5893,7 +5893,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           return `
             <div class="short-card">
               <div class="short-video-wrapper">
-                <video id="video-${r.id}" src="/api/media/output/${filename}" controls playsinline preload="metadata"></video>
+                <video id="video-${r.id}" src="/api/media/output/${filename}" poster="/api/renders/${r.id}/thumbnail" controls playsinline preload="metadata"></video>
               </div>
               <div class="short-content">
                 <div style="font-weight: 700; font-size: 0.95rem;">${r.title || 'Highlight'}</div>
@@ -7980,19 +7980,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         scrubber.innerHTML = '<div style="color:var(--text-dim); padding:1rem; font-size:0.8rem;">No frames extracted yet. Click Re-scan.</div>';
         return;
       }
-      scrubber.innerHTML = candidates.map((c, i) => `
-        <div class="frame-scrubber-item ${i === 0 ? 'active' : ''}" onclick="selectScrubberFrame(this, ${c.timestamp_sec})">
-          <div style="font-size:0.65rem; color:#fff; position:absolute; top:3px; left:4px; background:rgba(0,0,0,0.7); padding:1px 3px; border-radius:3px;">
+      scrubber.innerHTML = candidates.map((c, i) => {
+        const framePath = (c.frame_path || '').replace(/\\\\/g, '/');
+        const frameUrl = framePath ? `/api/media/${framePath}` : '';
+        return `
+        <div class="frame-scrubber-item ${i === 0 ? 'active' : ''}" onclick="selectScrubberFrame(this, ${c.timestamp_sec})" style="position:relative; overflow:hidden; border-radius:6px; cursor:pointer;">
+          <div style="font-size:0.65rem; color:#fff; position:absolute; top:3px; left:4px; background:rgba(0,0,0,0.7); padding:1px 4px; border-radius:3px; z-index:2;">
             ${c.timestamp_sec.toFixed(1)}s
           </div>
-          <div style="font-size:0.62rem; color:${c.has_face ? '#34d399' : '#f59e0b'}; position:absolute; bottom:3px; right:4px; background:rgba(0,0,0,0.7); padding:1px 3px; border-radius:3px;">
+          <div style="font-size:0.62rem; color:${c.has_face ? '#34d399' : '#f59e0b'}; position:absolute; bottom:3px; right:4px; background:rgba(0,0,0,0.7); padding:1px 4px; border-radius:3px; z-index:2;">
             ${c.has_face ? '👤 Face' : '🏞️ Scene'}
           </div>
+          ${frameUrl ? `<img src="${frameUrl}" style="width:100%; height:62px; object-fit:cover; display:block;" alt="Frame ${i+1}">` : `
           <div style="width:100%; height:62px; background:#222; display:flex; align-items:center; justify-content:center; color:#555; font-size:0.7rem;">
             Frame ${i+1}
-          </div>
+          </div>`}
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     function selectScrubberFrame(el, timestamp) {
@@ -8007,7 +8012,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       if (!thumbnails || thumbnails.length === 0) {
         gallery.innerHTML = `
           <div class="card" style="text-align: center; color: var(--text-dim); padding: 3rem 1rem; grid-column: span 3;">
-            No thumbnail variations generated yet. Click "Generate Thumbnail Variations" above.
+            <div style="font-size: 1.1rem; color: #fff; margin-bottom: 0.5rem;">No thumbnail variations generated yet</div>
+            <div style="margin-bottom: 1.25rem;">Click below to automatically generate 3 high-CTR thumbnail variations with face detection and safe-zone typography.</div>
+            <button class="btn-primary" onclick="generateActiveThumbnails()">⚡ Generate Thumbnail Variations Now</button>
           </div>
         `;
         return;
@@ -8070,13 +8077,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             custom_headline: customHead
           })
         });
-        const data = await res.json();
-        if (data.success && data.variations) {
-          await onThumbnailTargetChanged();
-          alert('3 High-CTR thumbnail variations generated!');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || `HTTP ${res.status}`);
         }
+        if (!data.success || !Array.isArray(data.variations)) {
+          throw new Error(data.detail || 'The server did not return any thumbnail variations.');
+        }
+        await onThumbnailTargetChanged();
+        alert(`${data.variations.length} thumbnail variations generated!`);
       } catch (err) {
-        alert('Thumbnail generation failed: ' + err);
+        alert('Thumbnail generation failed: ' + (err instanceof Error ? err.message : String(err)));
       }
     }
 
